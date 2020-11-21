@@ -2,32 +2,27 @@ import RedisPubSub from '/imports/startup/server/redis';
 import { check } from 'meteor/check';
 import Polls from '/imports/api/polls';
 import Logger from '/imports/startup/server/logger';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-export default function publishVote(credentials, id, pollAnswerId) { // TODO discuss location
-  const REDIS_CONFIG = Meteor.settings.redis;
+export default function publishVote(pollId, pollAnswerId) {
+  const REDIS_CONFIG = Meteor.settings.private.redis;
   const CHANNEL = REDIS_CONFIG.channels.toAkkaApps;
   const EVENT_NAME = 'RespondToPollReqMsg';
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
 
-  const { meetingId, requesterUserId } = credentials;
+  check(pollAnswerId, Number);
+  check(pollId, String);
 
-  const currentPoll = Polls.findOne({
-    users: requesterUserId,
-    meetingId,
-    'answers.id': pollAnswerId,
-    id,
+  const allowedToVote = Polls.findOne({ id: pollId, users: { $in: [requesterUserId] } }, {
+    fields: {
+      users: 1,
+    },
   });
 
-  check(meetingId, String);
-  check(requesterUserId, String);
-  check(pollAnswerId, Number);
-  check(currentPoll.meetingId, String);
-
-  const payload = {
-    requesterId: requesterUserId,
-    pollId: currentPoll.id,
-    questionId: 0,
-    answerId: pollAnswerId,
-  };
+  if (!allowedToVote) {
+    Logger.info(`Poll User={${requesterUserId}} has already voted in PollId={${pollId}}`);
+    return null;
+  }
 
   const selector = {
     users: requesterUserId,
@@ -35,6 +30,18 @@ export default function publishVote(credentials, id, pollAnswerId) { // TODO dis
     'answers.id': pollAnswerId,
   };
 
+  const payload = {
+    requesterId: requesterUserId,
+    pollId,
+    questionId: 0,
+    answerId: pollAnswerId,
+  };
+
+  /*
+   We keep an array of people who were in the meeting at the time the poll
+   was started. The poll is published to them only.
+   Once they vote - their ID is removed and they cannot see the poll anymore
+  */
   const modifier = {
     $pull: {
       users: requesterUserId,
@@ -43,14 +50,14 @@ export default function publishVote(credentials, id, pollAnswerId) { // TODO dis
 
   const cb = (err) => {
     if (err) {
-      return Logger.error(`Updating Polls collection: ${err}`);
+      return Logger.error(`Removing responded user from Polls collection: ${err}`);
     }
 
-    return Logger.info(`Updating Polls collection (meetingId: ${meetingId},
-                                            pollId: ${currentPoll.id}!)`);
+    Logger.info(`Removed responded user=${requesterUserId} from poll (meetingId: ${meetingId}, `
+      + `pollId: ${pollId}!)`);
+
+    return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, requesterUserId, payload);
   };
 
   Polls.update(selector, modifier, cb);
-
-  return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, requesterUserId, payload);
 }

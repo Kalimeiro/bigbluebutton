@@ -1,12 +1,13 @@
 import Storage from '/imports/ui/services/storage/session';
 import _ from 'lodash';
+import { makeCall } from '/imports/ui/services/api';
 
 const SETTINGS = [
   'application',
   'audio',
   'video',
   'cc',
-  'participants',
+  'dataSaving',
 ];
 
 class Settings {
@@ -32,9 +33,9 @@ class Settings {
     });
 
     // Sets default locale to browser locale
-    defaultValues.application.locale = navigator.languages[0] ||
-                                       navigator.language ||
-                                       defaultValues.application.locale;
+    defaultValues.application.locale = navigator.languages ? navigator.languages[0] : false
+      || navigator.language
+      || defaultValues.application.locale;
 
     this.setDefault(defaultValues);
   }
@@ -54,7 +55,23 @@ class Settings {
   }
 
   save() {
-    Object.keys(this).forEach(k => Storage.setItem(`settings${k}`, this[k].value));
+    Object.keys(this).forEach((k) => {
+      Storage.setItem(`settings${k}`, this[k].value);
+    });
+
+    const userSettings = {};
+
+    SETTINGS.forEach((e) => {
+      userSettings[e] = this[e];
+    });
+
+    Tracker.autorun((c) => {
+      const { status } = Meteor.status();
+      if (status === 'connected') {
+        c.stop();
+        makeCall('userChangedLocalSettings', userSettings);
+      }
+    });
   }
 }
 

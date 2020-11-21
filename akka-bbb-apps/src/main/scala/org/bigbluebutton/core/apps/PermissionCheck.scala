@@ -2,9 +2,9 @@ package org.bigbluebutton.core.apps
 
 import org.bigbluebutton.SystemConfiguration
 import org.bigbluebutton.core.apps.users.UsersApp
-import org.bigbluebutton.core.models.{ OldPresenter, Roles, UserState, Users2x }
+import org.bigbluebutton.core.models._
 import org.bigbluebutton.core.running.{ LiveMeeting, OutMsgRouter }
-import org.bigbluebutton.core2.message.senders.{ MsgBuilder, Sender }
+import org.bigbluebutton.core2.message.senders.Sender
 
 trait RightsManagementTrait extends SystemConfiguration {
   /**
@@ -37,7 +37,7 @@ trait RightsManagementTrait extends SystemConfiguration {
   }
 }
 
-object PermissionCheck {
+object PermissionCheck extends SystemConfiguration {
 
   val MOD_LEVEL = 100
   val AUTHED_LEVEL = 50
@@ -83,11 +83,17 @@ object PermissionCheck {
 
   def ejectUserForFailedPermission(meetingId: String, userId: String, reason: String,
                                    outGW: OutMsgRouter, liveMeeting: LiveMeeting): Unit = {
-    val ejectedBy = "SYSTEM"
+    if (ejectOnViolation) {
+      val ejectedBy = SystemUser.ID
 
-    UsersApp.ejectUserFromMeeting(outGW, liveMeeting, userId, ejectedBy, reason)
-    // send a system message to force disconnection
-    Sender.sendDisconnectClientSysMsg(meetingId, userId, ejectedBy, outGW)
+      UsersApp.ejectUserFromMeeting(outGW, liveMeeting, userId, ejectedBy, reason, EjectReasonCode.PERMISSION_FAILED, ban = false)
+
+      // send a system message to force disconnection
+      Sender.sendDisconnectClientSysMsg(meetingId, userId, ejectedBy, reason, outGW)
+    } else {
+      // TODO: get this object a context so it can use the akka logging system
+      println(s"Skipping violation ejection of ${userId} trying to ${reason} in ${meetingId}")
+    }
   }
 
   def addOldPresenter(users: Users2x, userId: String): OldPresenter = {

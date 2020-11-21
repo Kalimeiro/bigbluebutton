@@ -1,28 +1,34 @@
-import React, { Component } from 'react';
+import React, { PureComponent } from 'react';
 import PropTypes from 'prop-types';
 import { defineMessages, injectIntl } from 'react-intl';
-import Button from '/imports/ui/components/button/component';
-
-import styles from './styles.scss';
+import { Meteor } from 'meteor/meteor';
+import { Session } from 'meteor/session';
+import AudioManager from '/imports/ui/services/audio-manager';
+import { styles } from './styles';
 
 const intlMessages = defineMessages({
   500: {
     id: 'app.error.500',
-    defaultMessage: 'Ops, something went wrong',
+    defaultMessage: 'Oops, something went wrong',
+  },
+  410: {
+    id: 'app.error.410',
+  },
+  408: {
+    id: 'app.error.408',
   },
   404: {
     id: 'app.error.404',
     defaultMessage: 'Not found',
   },
-  401: {
-    id: 'app.error.401',
-  },
   403: {
     id: 'app.error.403',
   },
-  leave: {
-    id: 'app.error.leaveLabel',
-    description: 'aria-label for leaving',
+  401: {
+    id: 'app.error.401',
+  },
+  400: {
+    id: 'app.error.400',
   },
 });
 
@@ -37,16 +43,20 @@ const defaultProps = {
   code: 500,
 };
 
-class ErrorScreen extends Component {
-
-  onClick() {
-    window.location = window.location.origin;
+class ErrorScreen extends PureComponent {
+  componentDidMount() {
+    AudioManager.exitAudio();
+    Meteor.disconnect();
   }
 
   render() {
-    const { intl, code, children } = this.props;
+    const {
+      intl,
+      code,
+      children,
+    } = this.props;
 
-    let formatedMessage = intl.formatMessage(intlMessages[500]);
+    let formatedMessage = intl.formatMessage(intlMessages[defaultProps.code]);
 
     if (code in intlMessages) {
       formatedMessage = intl.formatMessage(intlMessages[code]);
@@ -54,21 +64,21 @@ class ErrorScreen extends Component {
 
     return (
       <div className={styles.background}>
-        <h1 className={styles.code}>
-          {code}
-        </h1>
         <h1 className={styles.message}>
           {formatedMessage}
         </h1>
-        <div className={styles.content}>
+        {
+          !Session.get('errorMessageDescription') || (
+            <div className={styles.sessionMessage}>
+              {Session.get('errorMessageDescription')}
+            </div>)
+        }
+        <div className={styles.separator} />
+        <h1 className={styles.codeError}>
+          {code}
+        </h1>
+        <div>
           {children}
-        </div>
-        <div className={styles.content}>
-          <Button
-            size={'sm'}
-            onClick={this.onClick}
-            label={intl.formatMessage(intlMessages.leave)}
-          />
         </div>
       </div>
     );

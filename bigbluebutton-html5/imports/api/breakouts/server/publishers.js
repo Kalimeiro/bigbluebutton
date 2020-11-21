@@ -1,32 +1,53 @@
 import { Meteor } from 'meteor/meteor';
-import mapToAcl from '/imports/startup/mapToAcl';
 import Breakouts from '/imports/api/breakouts';
+import Users from '/imports/api/users';
 import Logger from '/imports/startup/server/logger';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-function breakouts(credentials) {
-  const {
-    meetingId,
-    requesterUserId,
-  } = credentials;
+const ROLE_MODERATOR = Meteor.settings.public.user.role_moderator;
 
-  Logger.info(`Publishing Breakouts for ${meetingId} ${requesterUserId}`);
+function breakouts(role) {
+  if (!this.userId) {
+    return Breakouts.find({ meetingId: '' });
+  }
 
-  return Breakouts.find({
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
+  Logger.debug(`Publishing Breakouts for ${meetingId} ${requesterUserId}`);
+
+  const User = Users.findOne({ userId: requesterUserId, meetingId }, { fields: { role: 1 } });
+  if (!!User && User.role === ROLE_MODERATOR) {
+    const presenterSelector = {
+      $or: [
+        { parentMeetingId: meetingId },
+        { breakoutId: meetingId },
+      ],
+    };
+
+    return Breakouts.find(presenterSelector);
+  }
+
+  const selector = {
     $or: [
-      { breakoutId: meetingId },
-      { meetingId },
       {
-        users: {
-          $elemMatch: { userId: requesterUserId },
-        },
+        parentMeetingId: meetingId,
+        freeJoin: true,
+      },
+      {
+        parentMeetingId: meetingId,
+        'users.userId': requesterUserId,
+      },
+      {
+        breakoutId: meetingId,
       },
     ],
-  });
+  };
+
+  return Breakouts.find(selector);
 }
 
 function publish(...args) {
   const boundBreakouts = breakouts.bind(this);
-  return mapToAcl('subscriptions.breakouts', boundBreakouts)(args);
+  return boundBreakouts(...args);
 }
 
 Meteor.publish('breakouts', publish);

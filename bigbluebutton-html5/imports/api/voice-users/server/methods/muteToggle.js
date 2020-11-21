@@ -1,51 +1,49 @@
 import { Meteor } from 'meteor/meteor';
-import { check } from 'meteor/check';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 import RedisPubSub from '/imports/startup/server/redis';
 import Users from '/imports/api/users';
 import VoiceUsers from '/imports/api/voice-users';
+import Meetings from '/imports/api/meetings';
+import Logger from '/imports/startup/server/logger';
 
-export default function muteToggle(credentials, userId) {
-  const REDIS_CONFIG = Meteor.settings.redis;
+export default function muteToggle(uId) {
+  const REDIS_CONFIG = Meteor.settings.private.redis;
   const CHANNEL = REDIS_CONFIG.channels.toAkkaApps;
   const EVENT_NAME = 'MuteUserCmdMsg';
-  const APP_CONFIG = Meteor.settings.public.app;
-  const ALLOW_MODERATOR_TO_UNMUTE_AUDIO = APP_CONFIG.allowModeratorToUnmuteAudio;
-  const USER_CONFIG = Meteor.settings.public.user;
-  const ROLE_MODERATOR = USER_CONFIG.role_moderator;
 
-  const { meetingId, requesterUserId } = credentials;
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
+  const userToMute = uId || requesterUserId;
 
-  check(meetingId, String);
-  check(requesterUserId, String);
-
-  const payload = {
-    userId,
-    mutedBy: requesterUserId,
-  };
-
-  const user = Users.findOne({
+  const requester = Users.findOne({
     meetingId,
     userId: requesterUserId,
   });
 
   const voiceUser = VoiceUsers.findOne({
-    intId: userId,
+    intId: userToMute,
+    meetingId,
   });
 
-  if (!user || !voiceUser) return;
+  if (!requester || !voiceUser) return;
 
-  const isListenOnly = voiceUser.listenOnly;
+  const { listenOnly, muted } = voiceUser;
+  if (listenOnly) return;
 
-  if (isListenOnly) return;
+  // if allowModsToUnmuteUsers is false, users will be kicked out for attempting to unmute others
+  if (requesterUserId !== userToMute && muted) {
+    const meeting = Meetings.findOne({ meetingId },
+      { fields: { 'usersProp.allowModsToUnmuteUsers': 1 } });
+    if (meeting.usersProp && !meeting.usersProp.allowModsToUnmuteUsers) {
+      Logger.warn(`Attempted unmuting by another user meetingId:${meetingId} requester: ${requesterUserId} userId: ${userToMute}`);
+      return;
+    }
+  }
 
-  const isModerator = user.roles.includes(ROLE_MODERATOR.toLowerCase());
-  const isMuted = voiceUser.muted;
-  const isNotHimself = requesterUserId !== userId;
+  const payload = {
+    userId: userToMute,
+    mutedBy: requesterUserId,
+    mute: !muted,
+  };
 
-  if (!ALLOW_MODERATOR_TO_UNMUTE_AUDIO &&
-    isModerator &&
-    isMuted &&
-    isNotHimself) return;
-
-  return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, userId, payload);
+  RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, requesterUserId, payload);
 }

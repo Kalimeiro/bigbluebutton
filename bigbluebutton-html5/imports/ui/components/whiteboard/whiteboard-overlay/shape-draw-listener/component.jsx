@@ -1,12 +1,13 @@
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import styles from '../styles.scss';
 
 const ANNOTATION_CONFIG = Meteor.settings.public.whiteboard.annotations;
-const MESSAGE_FREQUENCY = ANNOTATION_CONFIG.message_frequency;
 const DRAW_START = ANNOTATION_CONFIG.status.start;
 const DRAW_UPDATE = ANNOTATION_CONFIG.status.update;
 const DRAW_END = ANNOTATION_CONFIG.status.end;
+
+// maximum value of z-index to prevent other things from overlapping
+const MAX_Z_INDEX = (2 ** 31) - 1;
 
 export default class ShapeDrawListener extends Component {
   constructor(props) {
@@ -31,15 +32,16 @@ export default class ShapeDrawListener extends Component {
 
     this.currentStatus = undefined;
 
-    // id of the setInterval()
-    this.intervalId = 0;
-
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.resetState = this.resetState.bind(this);
     this.sendLastMessage = this.sendLastMessage.bind(this);
     this.sendCoordinates = this.sendCoordinates.bind(this);
+    this.handleTouchStart = this.handleTouchStart.bind(this);
+    this.handleTouchMove = this.handleTouchMove.bind(this);
+    this.handleTouchEnd = this.handleTouchEnd.bind(this);
+    this.handleTouchCancel = this.handleTouchCancel.bind(this);
   }
 
   componentDidMount() {
@@ -54,26 +56,21 @@ export default class ShapeDrawListener extends Component {
     this.sendLastMessage();
   }
 
-  // main mouse down handler
-  handleMouseDown(event) {
-    // Sometimes when you Alt+Tab while drawing it can happen that your mouse is up,
-    // but the browser didn't catch it. So check it here.
-    if (this.isDrawing) {
-      return this.sendLastMessage();
-    }
-
-    window.addEventListener('mouseup', this.handleMouseUp);
-    window.addEventListener('mousemove', this.handleMouseMove, true);
+  commonDrawStartHandler(clientX, clientY) {
     this.isDrawing = true;
+
+    const {
+      actions,
+    } = this.props;
 
     const {
       getTransformedSvgPoint,
       generateNewShapeId,
       svgCoordinateToPercentages,
-    } = this.props.actions;
+    } = actions;
 
     // sending the first message
-    let transformedSvgPoint = getTransformedSvgPoint(event);
+    let transformedSvgPoint = getTransformedSvgPoint(clientX, clientY);
 
     // transforming svg coordinate to percentages relative to the slide width/height
     transformedSvgPoint = svgCoordinateToPercentages(transformedSvgPoint);
@@ -96,25 +93,26 @@ export default class ShapeDrawListener extends Component {
     };
 
     // All the messages will be send on timer by sendCoordinates func
-    this.intervalId = setInterval(this.sendCoordinates, MESSAGE_FREQUENCY);
-
-    return true;
+    this.sendCoordinates();
   }
 
-  // main mouse move handler
-  handleMouseMove(event) {
+  commonDrawMoveHandler(clientX, clientY) {
     if (!this.isDrawing) {
       return;
     }
 
     const {
+      actions,
+    } = this.props;
+
+    const {
       checkIfOutOfBounds,
       getTransformedSvgPoint,
       svgCoordinateToPercentages,
-    } = this.props.actions;
+    } = actions;
 
     // get the transformed svg coordinate
-    let transformedSvgPoint = getTransformedSvgPoint(event);
+    let transformedSvgPoint = getTransformedSvgPoint(clientX, clientY);
 
     // check if it's out of bounds
     transformedSvgPoint = checkIfOutOfBounds(transformedSvgPoint);
@@ -124,6 +122,68 @@ export default class ShapeDrawListener extends Component {
 
     // saving the last sent coordinate
     this.currentCoordinate = transformedSvgPoint;
+    this.sendCoordinates();
+  }
+
+  handleTouchStart(event) {
+    event.preventDefault();
+
+    if (!this.isDrawing) {
+      window.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+      window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+      window.addEventListener('touchcancel', this.handleTouchCancel, true);
+
+      const { clientX, clientY } = event.changedTouches[0];
+      this.commonDrawStartHandler(clientX, clientY);
+
+    // if you switch to a different window using Alt+Tab while mouse is down and release it
+    // it wont catch mouseUp and will keep tracking the movements. Thus we need this check.
+    } else {
+      this.sendLastMessage();
+    }
+  }
+
+  handleTouchMove(event) {
+    event.preventDefault();
+    const { clientX, clientY } = event.changedTouches[0];
+    this.commonDrawMoveHandler(clientX, clientY);
+  }
+
+  handleTouchEnd() {
+    this.sendLastMessage();
+  }
+
+  handleTouchCancel() {
+    this.sendLastMessage();
+  }
+
+  // main mouse down handler
+  handleMouseDown(event) {
+    const isLeftClick = event.button === 0;
+    const isRightClick = event.button === 2;
+
+    if (!this.isDrawing) {
+      if (isLeftClick) {
+        window.addEventListener('mouseup', this.handleMouseUp);
+        window.addEventListener('mousemove', this.handleMouseMove, true);
+
+        const { clientX, clientY } = event;
+        this.commonDrawStartHandler(clientX, clientY);
+      }
+
+    // if you switch to a different window using Alt+Tab while mouse is down and release it
+    // it wont catch mouseUp and will keep tracking the movements. Thus we need this check.
+    } else if (isRightClick) {
+      // this.isDrawing = false;
+      this.sendLastMessage();
+      this.discardAnnotation();
+    }
+  }
+
+  // main mouse move handler
+  handleMouseMove(event) {
+    const { clientX, clientY } = event;
+    this.commonDrawMoveHandler(clientX, clientY);
   }
 
   // main mouse up handler
@@ -132,30 +192,35 @@ export default class ShapeDrawListener extends Component {
   }
 
   sendCoordinates() {
+    const {
+      actions,
+      drawSettings,
+    } = this.props;
+
     // check the current drawing status
     if (!this.isDrawing) {
       return;
     }
     // check if a current coordinate is not the same as an initial one
     // it prevents us from drawing dots on random clicks
-    if (this.currentCoordinate.x === this.initialCoordinate.x &&
-        this.currentCoordinate.y === this.initialCoordinate.y) {
+    if (this.currentCoordinate.x === this.initialCoordinate.x
+        && this.currentCoordinate.y === this.initialCoordinate.y) {
       return;
     }
 
     // check if previously sent coordinate is not equal to a current one
-    if (this.currentCoordinate.x === this.lastSentCoordinate.x &&
-        this.currentCoordinate.y === this.lastSentCoordinate.y) {
+    if (this.currentCoordinate.x === this.lastSentCoordinate.x
+        && this.currentCoordinate.y === this.lastSentCoordinate.y) {
       return;
     }
 
-    const { getCurrentShapeId } = this.props.actions;
+    const { getCurrentShapeId } = actions;
     this.handleDrawCommonAnnotation(
       this.initialCoordinate,
       this.currentCoordinate,
       this.currentStatus,
       getCurrentShapeId(),
-      this.props.drawSettings.tool,
+      drawSettings.tool,
     );
     this.lastSentCoordinate = this.currentCoordinate;
 
@@ -165,21 +230,22 @@ export default class ShapeDrawListener extends Component {
   }
 
   sendLastMessage() {
-    // last message, clearing the interval
-    clearInterval(this.intervalId);
-    this.intervalId = 0;
+    const {
+      actions,
+      drawSettings,
+    } = this.props;
 
     if (this.isDrawing) {
       // make sure we are drawing and we have some coordinates sent for this shape before
       // to prevent sending DRAW_END on a random mouse click
       if (this.lastSentCoordinate.x && this.lastSentCoordinate.y) {
-        const { getCurrentShapeId } = this.props.actions;
+        const { getCurrentShapeId } = actions;
         this.handleDrawCommonAnnotation(
           this.initialCoordinate,
           this.currentCoordinate,
           DRAW_END,
           getCurrentShapeId(),
-          this.props.drawSettings.tool,
+          drawSettings.tool,
         );
       }
       this.resetState();
@@ -190,6 +256,10 @@ export default class ShapeDrawListener extends Component {
     // resetting the current drawing state
     window.removeEventListener('mouseup', this.handleMouseUp);
     window.removeEventListener('mousemove', this.handleMouseMove, true);
+    // touchend, touchmove and touchcancel are removed on devices
+    window.removeEventListener('touchend', this.handleTouchEnd, { passive: false });
+    window.removeEventListener('touchmove', this.handleTouchMove, { passive: false });
+    window.removeEventListener('touchcancel', this.handleTouchCancel, true);
     this.isDrawing = false;
     this.currentStatus = undefined;
     this.initialCoordinate = {
@@ -209,15 +279,30 @@ export default class ShapeDrawListener extends Component {
   // since Rectangle / Triangle / Ellipse / Line have the same coordinate structure
   // we use the same function for all of them
   handleDrawCommonAnnotation(startPoint, endPoint, status, id, shapeType) {
-    const { normalizeThickness, sendAnnotation } = this.props.actions;
+    const {
+      whiteboardId,
+      userId,
+      actions,
+      drawSettings,
+    } = this.props;
+
+    const {
+      normalizeThickness,
+      sendAnnotation,
+    } = actions;
+
+    const {
+      color,
+      thickness,
+    } = drawSettings;
 
     const annotation = {
       id,
       status,
       annotationType: shapeType,
       annotationInfo: {
-        color: this.props.drawSettings.color,
-        thickness: normalizeThickness(this.props.drawSettings.thickness),
+        color,
+        thickness: normalizeThickness(thickness),
         points: [
           startPoint.x,
           startPoint.y,
@@ -225,26 +310,64 @@ export default class ShapeDrawListener extends Component {
           endPoint.y,
         ],
         id,
-        whiteboardId: this.props.whiteboardId,
+        whiteboardId,
         status,
         type: shapeType,
       },
-      wbId: this.props.whiteboardId,
-      userId: this.props.userId,
+      wbId: whiteboardId,
+      userId,
       position: 0,
     };
 
-    sendAnnotation(annotation);
+    sendAnnotation(annotation, whiteboardId);
+  }
+
+  discardAnnotation() {
+    const {
+      whiteboardId,
+      actions,
+    } = this.props;
+
+    const {
+      getCurrentShapeId,
+      addAnnotationToDiscardedList,
+      undoAnnotation,
+    } = actions;
+
+    undoAnnotation(whiteboardId);
+    addAnnotationToDiscardedList(getCurrentShapeId());
   }
 
   render() {
-    const tool = this.props.drawSettings.tool;
+    const {
+      actions,
+      drawSettings,
+    } = this.props;
+
+    const {
+      contextMenuHandler,
+    } = actions;
+
+    const {
+      tool,
+    } = drawSettings;
+
+    const baseName = Meteor.settings.public.app.cdn + Meteor.settings.public.app.basename;
+    const shapeDrawStyle = {
+      width: '100%',
+      height: '100%',
+      touchAction: 'none',
+      zIndex: MAX_Z_INDEX,
+      cursor: `url('${baseName}/resources/images/whiteboard-cursor/${tool !== 'rectangle' ? tool : 'square'}.png'), default`,
+    };
+
     return (
       <div
+        onTouchStart={this.handleTouchStart}
         role="presentation"
-        className={styles[tool]}
-        style={{ width: '100%', height: '100%' }}
+        style={shapeDrawStyle}
         onMouseDown={this.handleMouseDown}
+        onContextMenu={contextMenuHandler}
       />
     );
   }
@@ -279,6 +402,6 @@ ShapeDrawListener.propTypes = {
     // Annotation thickness (not normalized)
     thickness: PropTypes.number.isRequired,
     // The name of the tool currently selected
-    tool: PropTypes.string.isRequired,
+    tool: PropTypes.string,
   }).isRequired,
 };

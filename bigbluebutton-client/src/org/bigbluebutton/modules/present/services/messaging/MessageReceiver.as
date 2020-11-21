@@ -38,6 +38,7 @@ package org.bigbluebutton.modules.present.services.messaging
   import org.bigbluebutton.modules.present.events.OfficeDocConvertFailedEvent;
   import org.bigbluebutton.modules.present.events.OfficeDocConvertInvalidEvent;
   import org.bigbluebutton.modules.present.events.OfficeDocConvertSuccessEvent;
+  import org.bigbluebutton.modules.present.events.PresentationDownloadableChangedEvent;
   import org.bigbluebutton.modules.present.events.PresentationPodRemoved;
   import org.bigbluebutton.modules.present.events.PresentationUploadTokenFail;
   import org.bigbluebutton.modules.present.events.PresentationUploadTokenPass;
@@ -77,6 +78,9 @@ package org.bigbluebutton.modules.present.services.messaging
         case "RemovePresentationEvtMsg":
           handleRemovePresentationEvtMsg(message);
           break;
+		case "SetPresentationDownloadableEvtMsg":
+		  handleSetPresentationDownloadable(message);
+		  break;
         case "PresentationConversionCompletedEvtMsg":
           handlePresentationConversionCompletedEvtMsg(message);
           break;
@@ -88,9 +92,6 @@ package org.bigbluebutton.modules.present.services.messaging
           break;
         case "PresentationConversionUpdateEvtMsg":
           handlePresentationConversionUpdateEvtMsg(message);
-          break;
-        case "GetPresentationInfoRespMsg":
-          handleGetPresentationInfoRespMsg(message);
           break;
         case "PresentationUploadTokenPassRespMsg":
           handlePresentationUploadTokenPassRespMsg(message);
@@ -179,6 +180,15 @@ package org.bigbluebutton.modules.present.services.messaging
     private function handleSetCurrentPresentationEvtMsg(msg:Object):void {
       service.changeCurrentPresentation(msg.body.podId, msg.body.presentationId);
     }
+	
+	private function handleSetPresentationDownloadable(msg:Object):void {
+		var podId: String = msg.body.podId as String;
+		var presentationId: String = msg.body.presentationId as String;
+		var downloadable: Boolean = msg.body.downloadable as Boolean;
+		service.setPresentationDownloadable(podId, presentationId, downloadable);
+		var downloadEvent:PresentationDownloadableChangedEvent = new PresentationDownloadableChangedEvent(podId, presentationId, downloadable);
+		dispatcher.dispatchEvent(downloadEvent);
+}
     
     private function handleRemovePresentationEvtMsg(msg:Object):void {
       var podId: String = msg.body.podId as String;
@@ -218,15 +228,9 @@ package org.bigbluebutton.modules.present.services.messaging
         var aPres:PresentationVO = processUploadedPresentation(presentations[k] as Object);
         presentationVOs.addItem(aPres);
       }
-        
-      var authorizedPresenters:ArrayCollection = new ArrayCollection();
-      var authPresArray:Array = presentationPod.authorizedPresenters as Array;
-      for (var m:int = 0; m < authorizedPresenters.length; m++) {
-        presentationVOs.addItem(authPresArray[m] as String);
-      }  
 
       var podVO:PresentationPodVO = new PresentationPodVO(presentationPod.id, presentationPod.currentPresenter,
-                                                          authorizedPresenters, presentationVOs);
+                                                          presentationVOs);
       return podVO;
     }
     
@@ -267,20 +271,7 @@ package org.bigbluebutton.modules.present.services.messaging
           break;
       }		
 
-    }	
-            
-    private function handleGetPresentationInfoRespMsg(msg:Object):void {
-      var presos:ArrayCollection = new ArrayCollection();
-      var presentations:Array = msg.body.presentations as Array;
-      var podId:String = msg.body.podId as String;
-      for (var j:int = 0; j < presentations.length; j++) {
-        var presentation:Object = presentations[j] as Object;
-        var presVO: PresentationVO = processUploadedPresentation(presentation);
-        presos.addItem(presVO);
-      }
-      
-      service.removeAllPresentations(podId);
-      service.addPresentations(podId, presos);
+    
     }
 
     private function handlePresentationUploadTokenPassRespMsg(msg:Object):void {

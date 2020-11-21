@@ -4,17 +4,11 @@ import RedisPubSub from '/imports/startup/server/redis';
 import Logger from '/imports/startup/server/logger';
 import Users from '/imports/api/users';
 
-const OFFLINE_CONNECTION_STATUS = 'offline';
-
-export default function userLeaving(credentials, userId) {
-  const REDIS_CONFIG = Meteor.settings.redis;
+export default function userLeaving(meetingId, userId, connectionId) {
+  const REDIS_CONFIG = Meteor.settings.private.redis;
   const CHANNEL = REDIS_CONFIG.channels.toAkkaApps;
   const EVENT_NAME = 'UserLeaveReqMsg';
 
-  const { meetingId, requesterUserId } = credentials;
-
-  check(meetingId, String);
-  check(requesterUserId, String);
   check(userId, String);
 
   const selector = {
@@ -23,31 +17,15 @@ export default function userLeaving(credentials, userId) {
   };
 
   const User = Users.findOne(selector);
+
   if (!User) {
-    throw new Meteor.Error(
-      'user-not-found', `Could not find ${userId} in ${meetingId}: cannot complete userLeaving`);
+    return Logger.info(`Skipping userLeaving. Could not find ${userId} in ${meetingId}`);
   }
 
-  if (User.connectionStatus === OFFLINE_CONNECTION_STATUS) {
-    return null;
-  }
-
-  if (User.validated) {
-    const modifier = {
-      $set: {
-        validated: null,
-      },
-    };
-
-    const cb = (err) => {
-      if (err) {
-        return Logger.error(`Invalidating user: ${err}`);
-      }
-
-      return Logger.info(`Invalidate user=${userId} meeting=${meetingId}`);
-    };
-
-    Users.update(selector, modifier, cb);
+  // If the current user connection is not the same that triggered the leave we skip
+  if (User.connectionId !== connectionId) {
+    Logger.info(`Skipping userLeaving. User connectionId=${User.connectionId} is different from requester connectionId=${connectionId}`);
+    return false;
   }
 
   const payload = {
@@ -55,7 +33,6 @@ export default function userLeaving(credentials, userId) {
     sessionId: meetingId,
   };
 
-  Logger.verbose(`User '${requesterUserId}' left meeting '${meetingId}'`);
-
-  return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, requesterUserId, payload);
+  Logger.info(`User '${userId}' is leaving meeting '${meetingId}'`);
+  return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, userId, payload);
 }

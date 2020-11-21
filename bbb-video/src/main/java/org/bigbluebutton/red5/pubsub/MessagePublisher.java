@@ -1,12 +1,20 @@
 package org.bigbluebutton.red5.pubsub;
 
-import org.bigbluebutton.common.messages.MessagingConstants;
-import org.bigbluebutton.common.messages.UserSharedWebcamMessage;
-import org.bigbluebutton.common.messages.UserUnshareWebcamRequestMessage;
+
 import java.util.HashMap;
 import java.util.Map;
+
+import org.bigbluebutton.common2.msgs.BbbClientMsgHeader;
+import org.bigbluebutton.common2.msgs.BbbCoreBaseHeader;
+import org.bigbluebutton.common2.msgs.UserBroadcastCamStartMsg;
+import org.bigbluebutton.common2.msgs.UserBroadcastCamStartMsgBody;
+import org.bigbluebutton.common2.msgs.UserBroadcastCamStopMsg;
+import org.bigbluebutton.common2.msgs.UserBroadcastCamStopMsgBody;
+import org.bigbluebutton.common2.msgs.ValidateConnAuthTokenSysMsg;
+import org.bigbluebutton.common2.msgs.ValidateConnAuthTokenSysMsgBody;
+import org.bigbluebutton.common2.redis.pubsub.MessageSender;
+
 import com.google.gson.Gson;
-import org.bigbluebutton.common2.msgs.*;
 
 public class MessagePublisher {
 
@@ -30,10 +38,11 @@ public class MessagePublisher {
 		return routing;
 	}
 
-	public void validateConnAuthToken(String meetingId, String userId, String authToken) {
-		BbbClientMsgHeader header = new BbbClientMsgHeader("ValidateConnAuthTokenSysMsg", meetingId, userId);
+
+	public void validateConnAuthToken(String meetingId, String userId, String authToken, String connId) {
+		BbbCoreBaseHeader header = new BbbCoreBaseHeader("ValidateConnAuthTokenSysMsg");
 		ValidateConnAuthTokenSysMsgBody body = new ValidateConnAuthTokenSysMsgBody(meetingId,
-				userId, authToken, "VIDEO");
+				userId, authToken, connId, "VIDEO");
 		ValidateConnAuthTokenSysMsg msg = new ValidateConnAuthTokenSysMsg(header, body);
 
 		Map<String, String> routing = buildRouting();
@@ -49,7 +58,42 @@ public class MessagePublisher {
 		sender.send("to-akka-apps-redis-channel", json);
 	}
 
-	// Polling 
+	public void sendVideoStreamStartedMsg(String meetingId, String userId, String streamId) {
+		BbbClientMsgHeader header = new BbbClientMsgHeader("UserBroadcastCamStartMsg", meetingId, userId);
+		UserBroadcastCamStartMsgBody body = new UserBroadcastCamStartMsgBody(streamId);
+		UserBroadcastCamStartMsg msg = new UserBroadcastCamStartMsg(header, body);
+		Map<String, String> routing = buildRouting();
+		Map<String, Object> envelope = buildEnvelope("UserBroadcastCamStartMsg", routing);
+
+		Map<String, Object> fullmsg = new HashMap<String, Object>();
+		fullmsg.put("envelope", envelope);
+		fullmsg.put("core", msg);
+
+		Gson gson = new Gson();
+		String json = gson.toJson(fullmsg);
+
+		sender.send("to-akka-apps-redis-channel", json);
+	}
+
+	public void sendVideoStreamStoppedMsg(String meetingId, String userId, String streamId) {
+		BbbClientMsgHeader header = new BbbClientMsgHeader("UserBroadcastCamStopMsg", meetingId, userId);
+		UserBroadcastCamStopMsgBody body = new UserBroadcastCamStopMsgBody(streamId);
+		UserBroadcastCamStopMsg msg = new UserBroadcastCamStopMsg(header, body);
+		Map<String, String> routing = buildRouting();
+		Map<String, Object> envelope = buildEnvelope("UserBroadcastCamStopMsg", routing);
+
+		Map<String, Object> fullmsg = new HashMap<String, Object>();
+		fullmsg.put("envelope", envelope);
+		fullmsg.put("core", msg);
+
+		Gson gson = new Gson();
+		String json = gson.toJson(fullmsg);
+
+		sender.send("to-akka-apps-redis-channel", json);
+	}
+
+	// Polling
+	/*
 	public void userSharedWebcamMessage(String meetingId, String userId, String streamId) {
 		UserSharedWebcamMessage msg = new UserSharedWebcamMessage(meetingId, userId, streamId);
 		sender.send(MessagingConstants.TO_USERS_CHANNEL, msg.toJson());
@@ -59,6 +103,7 @@ public class MessagePublisher {
 		UserUnshareWebcamRequestMessage msg = new UserUnshareWebcamRequestMessage(meetingId, userId, streamId);
 		sender.send(MessagingConstants.TO_USERS_CHANNEL, msg.toJson());
 	}
+	*/
 	
 	public void startRotateLeftTranscoderRequest(String meetingId, String transcoderId, String streamName, String ipAddress) {
 		Map<String, String> params = new HashMap<String, String>();

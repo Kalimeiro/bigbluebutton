@@ -1,24 +1,23 @@
 import Annotations from '/imports/api/annotations';
 import { Meteor } from 'meteor/meteor';
-import { check } from 'meteor/check';
 import Logger from '/imports/startup/server/logger';
-import mapToAcl from '/imports/startup/mapToAcl';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-function annotations(credentials) {
-  const { meetingId, requesterUserId, requesterToken } = credentials;
+function annotations() {
+  if (!this.userId) {
+    return Annotations.find({ meetingId: '' });
+  }
 
-  check(meetingId, String);
-  check(requesterUserId, String);
-  check(requesterToken, String);
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
 
-  Logger.info(`Publishing Annotations for ${meetingId} ${requesterUserId} ${requesterToken}`);
+  Logger.debug(`Publishing Annotations for ${meetingId} ${requesterUserId}`);
 
   return Annotations.find({ meetingId });
 }
 
 function publish(...args) {
   const boundAnnotations = annotations.bind(this);
-  return mapToAcl('subscriptions.annotations', boundAnnotations)(args);
+  return boundAnnotations(...args);
 }
 
 Meteor.publish('annotations', publish);

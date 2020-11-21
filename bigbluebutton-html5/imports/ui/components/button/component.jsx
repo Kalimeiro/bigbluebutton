@@ -1,7 +1,8 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import cx from 'classnames';
-import styles from './styles';
+import Tooltip from '/imports/ui/components/tooltip/component';
+import { styles } from './styles';
 import Icon from '../icon/component';
 import BaseButton from './base/component';
 
@@ -10,7 +11,7 @@ const SIZES = [
 ];
 
 const COLORS = [
-  'default', 'primary', 'danger', 'success',
+  'default', 'primary', 'danger', 'success', 'dark',
 ];
 
 const propTypes = {
@@ -83,19 +84,17 @@ const defaultProps = {
   block: false,
   iconRight: false,
   hideLabel: false,
+  tooltipLabel: '',
 };
 
 export default class Button extends BaseButton {
-
   _getClassNames() {
     const {
       size,
       color,
-      disabled,
       ghost,
       circle,
       block,
-      iconRight,
     } = this.props;
 
     const propClassNames = {};
@@ -106,15 +105,50 @@ export default class Button extends BaseButton {
     propClassNames[styles.ghost] = ghost;
     propClassNames[styles.circle] = circle;
     propClassNames[styles.block] = block;
-    propClassNames[styles.iconRight] = iconRight;
-    propClassNames[styles.disabled] = disabled;
 
     return propClassNames;
   }
 
+  _cleanProps(otherProps) {
+    const remainingProps = Object.assign({}, otherProps);
+    delete remainingProps.icon;
+    delete remainingProps.customIcon;
+    delete remainingProps.size;
+    delete remainingProps.color;
+    delete remainingProps.ghost;
+    delete remainingProps.circle;
+    delete remainingProps.block;
+    delete remainingProps.hideLabel;
+    delete remainingProps.tooltipDistance;
+    delete remainingProps.tooltipLabel;
+
+    return remainingProps;
+  }
+
   render() {
-    const renderFuncName = this.props.circle ?
-      'renderCircle' : 'renderDefault';
+    const {
+      circle,
+      hideLabel,
+      label,
+      'aria-label': ariaLabel,
+      'aria-expanded': ariaExpanded,
+      tooltipDistance,
+      tooltipLabel,
+    } = this.props;
+
+    const renderFuncName = circle ? 'renderCircle' : 'renderDefault';
+
+    if ((hideLabel && !ariaExpanded) || tooltipLabel) {
+      const buttonLabel = label || ariaLabel;
+      return (
+        <Tooltip
+          tooltipDistance={tooltipDistance}
+          title={tooltipLabel || buttonLabel}
+        >
+          {this[renderFuncName]()}
+        </Tooltip>
+      );
+    }
 
     return this[renderFuncName]();
   }
@@ -126,15 +160,7 @@ export default class Button extends BaseButton {
       ...otherProps
     } = this.props;
 
-    const remainingProps = Object.assign({}, otherProps);
-    delete remainingProps.icon;
-    delete remainingProps.customIcon;
-    delete remainingProps.size;
-    delete remainingProps.color;
-    delete remainingProps.ghost;
-    delete remainingProps.circle;
-    delete remainingProps.block;
-    delete remainingProps.hideLabel;
+    const remainingProps = this._cleanProps(otherProps);
 
     /* TODO: We can change this and make the button with flexbox to avoid html
       changes */
@@ -160,13 +186,7 @@ export default class Button extends BaseButton {
       ...otherProps
     } = this.props;
 
-    const remainingProps = Object.assign({}, otherProps);
-    delete remainingProps.icon;
-    delete remainingProps.color;
-    delete remainingProps.ghost;
-    delete remainingProps.circle;
-    delete remainingProps.block;
-    delete remainingProps.hideLabel;
+    const remainingProps = this._cleanProps(otherProps);
 
     return (
       <BaseButton
@@ -183,12 +203,14 @@ export default class Button extends BaseButton {
   }
 
   renderIcon() {
-    const iconName = this.props.icon;
-    const customIcon = this.props.customIcon;
+    const {
+      icon: iconName,
+      customIcon,
+    } = this.props;
 
     if (iconName) {
       return (<Icon className={styles.icon} iconName={iconName} />);
-    } else if (customIcon) {
+    } if (customIcon) {
       return customIcon;
     }
 

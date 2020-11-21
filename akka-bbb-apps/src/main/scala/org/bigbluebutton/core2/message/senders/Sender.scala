@@ -6,18 +6,20 @@ object Sender {
 
   def sendUserEjectedFromMeetingClientEvtMsg(meetingId: String, userId: String,
                                              ejectedBy: String, reason: String,
-                                             outGW: OutMsgRouter): Unit = {
-    val ejectFromMeetingClientEvent = MsgBuilder.buildUserEjectedFromMeetingEvtMsg(
-      meetingId, userId, ejectedBy, reason
-    )
+                                             reasonCode: String, outGW: OutMsgRouter): Unit = {
+    val ejectFromMeetingClientEvent = MsgBuilder.buildUserEjectedFromMeetingEvtMsg(meetingId, userId, ejectedBy, reason, reasonCode)
     outGW.send(ejectFromMeetingClientEvent)
   }
 
   def sendDisconnectClientSysMsg(meetingId: String, userId: String,
-                                 ejectedBy: String, outGW: OutMsgRouter): Unit = {
-    val ejectFromMeetingSystemEvent = MsgBuilder.buildDisconnectClientSysMsg(
-      meetingId, userId, ejectedBy
-    )
+                                 ejectedBy: String, reason: String, outGW: OutMsgRouter): Unit = {
+    val ejectFromMeetingSystemEvent = MsgBuilder.buildDisconnectClientSysMsg(meetingId, userId, ejectedBy, reason)
     outGW.send(ejectFromMeetingSystemEvent)
   }
+
+  def sendUserInactivityInspectMsg(meetingId: String, userId: String, responseDelay: Long, outGW: OutMsgRouter): Unit = {
+    val userInactivityInspectMsg = MsgBuilder.buildUserInactivityInspectMsg(meetingId, userId, responseDelay)
+    outGW.send(userInactivityInspectMsg)
+  }
+
 }

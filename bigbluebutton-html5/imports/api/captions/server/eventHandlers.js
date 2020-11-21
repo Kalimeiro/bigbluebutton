@@ -1,9 +1,7 @@
 import RedisPubSub from '/imports/startup/server/redis';
-import handleCaptionHistory from './handlers/captionHistory';
-import handleCaptionUpdate from './handlers/captionUpdate';
-import handleCaptionOwnerUpdate from './handlers/captionOwnerUpdate';
+import { processForCaptionsPadOnly } from '/imports/api/captions/server/helpers';
+import handlePadCreate from './handlers/padCreate';
+import handlePadUpdate from './handlers/padUpdate';
 
-// TODO
-RedisPubSub.on('SendCaptionHistoryRespMsg', handleCaptionHistory);
-RedisPubSub.on('EditCaptionHistoryEvtMsg', handleCaptionUpdate);
-RedisPubSub.on('UpdateCaptionOwnerEvtMsg', handleCaptionOwnerUpdate);
+RedisPubSub.on('PadCreateSysMsg', processForCaptionsPadOnly(handlePadCreate));
+RedisPubSub.on('PadUpdateSysMsg', processForCaptionsPadOnly(handlePadUpdate));

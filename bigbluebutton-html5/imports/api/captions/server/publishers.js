@@ -1,24 +1,21 @@
 import Captions from '/imports/api/captions';
 import { Meteor } from 'meteor/meteor';
-import { check } from 'meteor/check';
 import Logger from '/imports/startup/server/logger';
-import mapToAcl from '/imports/startup/mapToAcl';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-function captions(credentials) {
-  const { meetingId, requesterUserId, requesterToken } = credentials;
-
-  check(meetingId, String);
-  check(requesterUserId, String);
-  check(requesterToken, String);
-
-  Logger.verbose(`Publishing Captions for ${meetingId} ${requesterUserId} ${requesterToken}`);
+function captions() {
+  if (!this.userId) {
+    return Captions.find({ meetingId: '' });
+  }
+  const { meetingId } = extractCredentials(this.userId);
+  Logger.debug(`Publishing Captions for ${meetingId}`);
 
   return Captions.find({ meetingId });
 }
 
 function publish(...args) {
   const boundCaptions = captions.bind(this);
-  return mapToAcl('subscriptions.captions', boundCaptions)(args);
+  return boundCaptions(...args);
 }
 
 Meteor.publish('captions', publish);

@@ -1,23 +1,22 @@
 import Screenshare from '/imports/api/screenshare';
 import { Meteor } from 'meteor/meteor';
-import { check } from 'meteor/check';
 import Logger from '/imports/startup/server/logger';
-import mapToAcl from '/imports/startup/mapToAcl';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-function screenshare(credentials) {
-  const { meetingId, requesterUserId } = credentials;
+function screenshare() {
+  if (!this.userId) {
+    return Screenshare.find({ meetingId: '' });
+  }
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
 
-  check(meetingId, String);
-  check(requesterUserId, String);
-
-  Logger.info(`Publishing Screenshare for ${meetingId} ${requesterUserId}`);
+  Logger.debug(`Publishing Screenshare for ${meetingId} ${requesterUserId}`);
 
   return Screenshare.find({ meetingId });
 }
 
 function publish(...args) {
   const boundScreenshare = screenshare.bind(this);
-  return mapToAcl('subscriptions.screenshare', boundScreenshare)(args);
+  return boundScreenshare(...args);
 }
 
 Meteor.publish('screenshare', publish);

@@ -21,6 +21,7 @@ package org.bigbluebutton.modules.present.business
 	import com.asfusion.mate.events.Dispatcher;
 	
 	import flash.net.URLRequest;
+	import flash.net.URLVariables;
 	import flash.net.navigateToURL;
 	
 	import mx.collections.ArrayCollection;
@@ -40,10 +41,9 @@ package org.bigbluebutton.modules.present.business
 	import org.bigbluebutton.modules.present.events.PresentationUploadTokenPass;
 	import org.bigbluebutton.modules.present.events.PresenterCommands;
 	import org.bigbluebutton.modules.present.events.RemovePresentationEvent;
-	import org.bigbluebutton.modules.present.events.RequestAllPodsEvent;
 	import org.bigbluebutton.modules.present.events.RequestClosePresentationPodEvent;
 	import org.bigbluebutton.modules.present.events.RequestNewPresentationPodEvent;
-	import org.bigbluebutton.modules.present.events.RequestPresentationInfoPodEvent;
+	import org.bigbluebutton.modules.present.events.SetPresentationDownloadableEvent;
 	import org.bigbluebutton.modules.present.events.SetPresenterInPodReqEvent;
 	import org.bigbluebutton.modules.present.events.UploadEvent;
 	import org.bigbluebutton.modules.present.model.Page;
@@ -60,7 +60,6 @@ package org.bigbluebutton.modules.present.business
 		private var host:String;
 		private var conference:String;
 		private var room:String;
-		private var userid:Number;
 		private var uploadService:FileUploadService;
 		private var sender:MessageSender;
     
@@ -76,25 +75,18 @@ package org.bigbluebutton.modules.present.business
 			service = new PresentationService();
 		}
 
-		public function getCurrentPresentationInfo():void {
-			podManager.requestAllPodsPresentationInfo();
-		}
-
-		public function handleRequestAllPodsEvent(e: RequestAllPodsEvent):void {
+		public function getPresentationPodsInfo():void {
 			sender.requestAllPodsEvent();
 		}
 
 		public function connect(e:PresentModuleEvent):void {
 			extractAttributes(e.data);
-
-			podManager.requestAllPodsPresentationInfo();
 		}
 
 		private function extractAttributes(a:Object):void{
 			host = a.host as String;
 			conference = a.conference as String;
 			room = a.room as String;
-			userid = a.userid as Number;
 		}
     
     public function handleGetListOfPresentationsRequest(event: GetListOfPresentationsRequest):void {
@@ -112,10 +104,6 @@ package org.bigbluebutton.modules.present.business
       var dispatcher:Dispatcher = new Dispatcher();
       dispatcher.dispatchEvent(new GetListOfPresentationsReply(idAndName));
     }
-
-		private function handleRequestPresentationInfoPodEvent(e: RequestPresentationInfoPodEvent): void {
-			sender.getPresentationInfo(e.podId);
-		}
     
     public function handleChangePresentationCommand(cmd:ChangePresentationCommand):void {
 		var presModel: PresentationModel = podManager.getPod(cmd.podId);
@@ -211,10 +199,14 @@ package org.bigbluebutton.modules.present.business
 		 *
 		 */
 		public function startDownload(e:DownloadEvent):void {
-			var presentationName:String = e.fileNameToDownload;
-			var downloadUri:String = host + "/bigbluebutton/presentation/" + conference + "/" + room + "/" + presentationName + "/download";
+			var presFilename:String = e.presFilename;
+			var presId:String = e.presId
+			var downloadUri:String = host + "/bigbluebutton/presentation/download/" + room + "/" + presId;
 			LOGGER.debug("PresentationApplication::downloadPresentation()... " + downloadUri);
 			var req:URLRequest = new URLRequest(downloadUri);
+			var sendVars:URLVariables = new URLVariables();
+			sendVars.presFilename = presFilename;
+			req.data = sendVars;
 			navigateToURL(req,"_blank");
 		}
 
@@ -230,6 +222,13 @@ package org.bigbluebutton.modules.present.business
 
 		public function removePresentation(e:RemovePresentationEvent):void {
 			sender.removePresentation(e.podId, e.presentationName);
+		}
+		
+		public function setPresentationDownloadable(e:SetPresentationDownloadableEvent):void {
+			var presentation:Presentation = podManager.getPod(e.podId).getPresentation(e.presentationName);
+			if (presentation) {
+				sender.setPresentationDownloadable(e.podId, e.presentationName, !presentation.downloadable);
+			} 
 		}
 		
 		/**

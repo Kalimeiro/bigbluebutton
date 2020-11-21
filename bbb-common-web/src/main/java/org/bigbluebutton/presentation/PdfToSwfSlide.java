@@ -41,22 +41,21 @@ public class PdfToSwfSlide {
 
   private volatile boolean done = false;
   private File slide;
+  private File pageFile;
 
-  public PdfToSwfSlide(UploadedPresentation pres, int page) {
+  public PdfToSwfSlide(UploadedPresentation pres, int page, File pageFile) {
     this.pres = pres;
     this.page = page;
+    this.pageFile = pageFile;
   }
 
   public PdfToSwfSlide createSlide() {
-    File presentationFile = pres.getUploadedFile();
-    slide = new File(presentationFile.getParent() + File.separatorChar
-        + "slide-" + page + ".swf");
-    pdfToSwfConverter.convert(presentationFile, slide, page, pres);
+    slide = new File(pageFile.getParent() + File.separatorChar + "slide-" + page + ".swf");
+    pdfToSwfConverter.convert(pageFile, slide, page, pres);
 
     // If all fails, generate a blank slide.
     if (!slide.exists()) {
-      log.warn("Failed to create slide. Creating blank slide for "
-          + slide.getAbsolutePath());
+      log.warn("Failed to create slide. Creating blank slide for " + slide.getAbsolutePath());
       generateBlankSlide();
     }
 
@@ -67,7 +66,7 @@ public class PdfToSwfSlide {
 
   public void generateBlankSlide() {
     if (BLANK_SLIDE != null) {
-      Map<String, Object> logData = new HashMap<String, Object>();
+      Map<String, Object> logData = new HashMap<>();
       logData.put("meetingId", pres.getMeetingId());
       logData.put("presId", pres.getId());
       logData.put("filename", pres.getName());
@@ -80,7 +79,7 @@ public class PdfToSwfSlide {
 
       copyBlankSlide(slide);
     } else {
-      Map<String, Object> logData = new HashMap<String, Object>();
+      Map<String, Object> logData = new HashMap<>();
       logData.put("meetingId", pres.getMeetingId());
       logData.put("presId", pres.getId());
       logData.put("filename", pres.getName());
@@ -97,7 +96,7 @@ public class PdfToSwfSlide {
     try {
       FileUtils.copyFile(new File(BLANK_SLIDE), slide);
     } catch (IOException e) {
-      log.error("IOException while copying blank slide.");
+      log.error("IOException while copying blank slide.", e);
     }
   }
 

@@ -1,11 +1,12 @@
 import { Meteor } from 'meteor/meteor';
-import mapToAcl from '/imports/startup/mapToAcl';
-import listenOnlyToggle from './methods/listenOnlyToggle';
 import muteToggle from './methods/muteToggle';
+import muteAllToggle from './methods/muteAllToggle';
+import muteAllExceptPresenterToggle from './methods/muteAllExceptPresenterToggle';
+import ejectUserFromVoice from './methods/ejectUserFromVoice';
 
-Meteor.methods(mapToAcl(['methods.listenOnlyToggle', 'methods.toggleSelfVoice', 'methods.toggleVoice',
-], {
-  listenOnlyToggle,
-  toggleSelfVoice: (credentials) => { muteToggle(credentials, credentials.requesterUserId); },
+Meteor.methods({
   toggleVoice: muteToggle,
-}));
+  muteAllUsers: muteAllToggle,
+  muteAllExceptPresenter: muteAllExceptPresenterToggle,
+  ejectUserFromVoice,
+});

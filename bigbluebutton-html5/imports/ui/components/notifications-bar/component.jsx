@@ -2,15 +2,14 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import cx from 'classnames';
 import injectWbResizeEvent from '/imports/ui/components/presentation/resize-wrapper/component';
-import styles from './styles.scss';
+import { styles } from './styles.scss';
 
 const COLORS = [
   'default', 'primary', 'danger', 'success',
 ];
 
 const propTypes = {
-  children: PropTypes.string.isRequired,
-  color: PropTypes.oneOf(COLORS),
+  color: PropTypes.string,
 };
 
 const defaultProps = {
@@ -18,14 +17,26 @@ const defaultProps = {
 };
 
 const NotificationsBar = (props) => {
-  const { color } = props;
+  const {
+    color,
+    children,
+    alert,
+  } = props;
+
+  const hasColor = COLORS.includes(color);
 
   return (
     <div
-      role="alert"
-      className={cx(styles.notificationsBar, styles[color])}
+      role={alert ? 'alert' : ''}
+      aria-live="off"
+      style={
+        !hasColor ? {
+          backgroundColor: `${color}`,
+        } : {}
+    }
+      className={cx(styles.notificationsBar, hasColor ? styles[color] : null)}
     >
-      {props.children}
+      {children}
     </div>
   );
 };

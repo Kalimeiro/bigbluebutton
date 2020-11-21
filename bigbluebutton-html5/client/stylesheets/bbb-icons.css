@@ -1,10 +1,6 @@
 @font-face {
   font-family: 'bbb-icons';
-  src: url('/fonts/BbbIcons/bbb-icons.eot?j1ntjp');
-  src: url('/fonts/BbbIcons/bbb-icons.eot?j1ntjp#iefix') format('embedded-opentype'),
-       url('/fonts/BbbIcons/bbb-icons.ttf?j1ntjp') format('truetype'),
-       url('/fonts/BbbIcons/bbb-icons.woff?j1ntjp') format('woff'),
-       url('/fonts/BbbIcons/bbb-icons.svg?j1ntjp#bbb-icons') format('svg');
+  src: url('/fonts/BbbIcons/bbb-icons.woff?j1ntjp') format('woff');
   font-weight: normal;
   font-style: normal;
 }
@@ -20,7 +16,7 @@
   font-weight: 400;
   line-height: 1;
   -webkit-font-smoothing: antialiased;
-  width: 1.28571429em;
+  width: 1em;
   text-align: center;
   vertical-align: middle;
 
@@ -53,7 +49,7 @@
 .icon-bbb-fit_to_screen:before {
   content: "\e929";
 }
-.icon-bbb-linte_tool:before {
+.icon-bbb-line_tool:before {
   content: "\e91c";
 }
 .icon-bbb-circle_tool:before {
@@ -217,7 +213,7 @@
 .icon-bbb-template_download:before {
   content: "\e93b";
 }
-.icon-bbb-save_notes:before {
+.icon-bbb-download:before {
   content: "\e93c";
 }
 .icon-bbb-multi_whiteboard:before {
@@ -267,4 +263,25 @@
 }
 .icon-bbb-warning:before {
   content: "\e94c";
+}
+.icon-bbb-pointer:before {
+  content: "\e950";
+}
+.icon-bbb-star_filled:before {
+  content: "\e952";
+}
+.icon-bbb-desktop_off:before {
+  content: "\e953";
+}
+.icon-bbb-minus:before {
+  content: "\e954";
+}
+.icon-bbb-download-off:before {
+  content: "\e955";
+}
+.icon-bbb-popout_window:before {
+  content: "\e956";
+}
+.icon-bbb-closed_caption:before {
+  content: "\e957";
 }

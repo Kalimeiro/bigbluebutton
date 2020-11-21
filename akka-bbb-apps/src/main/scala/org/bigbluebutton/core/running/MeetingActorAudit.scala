@@ -1,8 +1,6 @@
 package org.bigbluebutton.core.running
 
 import java.io.{ PrintWriter, StringWriter }
-import java.text.SimpleDateFormat
-import java.util.Date
 
 import akka.actor.Actor
 import akka.actor.ActorLogging
@@ -20,9 +18,9 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 object MeetingActorAudit {
   def props(
-    props:    DefaultProps,
-    eventBus: InternalEventBus,
-    outGW:    OutMsgRouter
+      props:    DefaultProps,
+      eventBus: InternalEventBus,
+      outGW:    OutMsgRouter
   ): Props =
     Props(classOf[MeetingActorAudit], props, eventBus, outGW)
 }
@@ -30,10 +28,10 @@ object MeetingActorAudit {
 // This actor is an internal audit actor for each meeting actor that
 // periodically sends messages to the meeting actor
 class MeetingActorAudit(
-  val props:    DefaultProps,
-  val eventBus: InternalEventBus, val outGW: OutMsgRouter
+    val props:    DefaultProps,
+    val eventBus: InternalEventBus, val outGW: OutMsgRouter
 )
-    extends Actor with ActorLogging with SystemConfiguration with AuditHelpers {
+  extends Actor with ActorLogging with SystemConfiguration with AuditHelpers {
 
   object AuditMonitorInternalMsg
 
@@ -82,6 +80,11 @@ class MeetingActorAudit(
       props.meetingProp.intId,
       SendBreakoutUsersAuditInternalMsg(props.breakoutProps.parentId, props.meetingProp.intId)
     ))
+
+    // Trigger recording timer, only for meeting allowing recording
+    if (props.recordProp.record) {
+      eventBus.publish(BigBlueButtonEvent(props.meetingProp.intId, SendRecordingTimerInternalMsg(props.meetingProp.intId)))
+    }
   }
 
 }

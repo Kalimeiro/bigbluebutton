@@ -32,8 +32,6 @@ package org.bigbluebutton.core
     public static const LOCK_LAYOUT_REQ:String            = 'LockLayoutRequest';
     public static const UNLOCK_LAYOUT_REQ:String          = 'UnlockLayoutRequest';
     public static const SEND_PUBLIC_CHAT_REQ:String       = 'SendPublicChatRequest';
-    public static const SEND_PRIVATE_CHAT_REQ:String      = 'SendPrivateChatRequest';
-    
     
     /** Events to External JS **/
     public static const GET_MY_ROLE_RESP:String           = 'GetMyRoleResponse';
@@ -62,6 +60,7 @@ package org.bigbluebutton.core
     public static const IS_USER_PUBLISHING_CAM_RESP:String = "IsUserPublishingCamResponse";
     public static const OPEN_EXTERNAL_UPLOAD_WINDOW:String = "OpenExternalFileUploadWindowEvent";
     public static const QUERY_PRESENTATION_REPLY:String    = "QueryPresentationsReplyEvent";
+	public static const PRESENTATION_PODS_COUNT_UPDATE:String = "PresentationPodsCountUpdate";
     
     /** For Conversion Update Events **/
     public static const OFFICE_DOC_CONVERSION_SUCCESS:String    = "OfficeDocConversionSuccessEvent";

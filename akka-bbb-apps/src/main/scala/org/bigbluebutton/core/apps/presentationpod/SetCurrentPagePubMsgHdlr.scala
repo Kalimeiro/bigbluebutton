@@ -11,8 +11,8 @@ trait SetCurrentPagePubMsgHdlr extends RightsManagementTrait {
   this: PresentationPodHdlrs =>
 
   def handle(
-    msg: SetCurrentPagePubMsg, state: MeetingState2x,
-    liveMeeting: LiveMeeting, bus: MessageBus
+      msg: SetCurrentPagePubMsg, state: MeetingState2x,
+      liveMeeting: LiveMeeting, bus: MessageBus
   ): MeetingState2x = {
 
     if (filterPresentationMessage(liveMeeting.users2x, msg.header.userId) &&
@@ -42,7 +42,7 @@ trait SetCurrentPagePubMsgHdlr extends RightsManagementTrait {
       val pageId = msg.body.pageId
 
       val newState = for {
-        pod <- PresentationPodsApp.getPresentationPod(state, podId)
+        pod <- PresentationPodsApp.getPresentationPodIfPresenter(state, podId, userId)
         updatedPod <- pod.setCurrentPage(presentationId, pageId)
       } yield {
 

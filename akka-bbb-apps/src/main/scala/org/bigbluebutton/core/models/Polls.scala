@@ -25,7 +25,7 @@ object Polls {
     for {
       pod <- state.presentationPodManager.getDefaultPod()
       pres <- pod.getCurrentPresentation()
-      page <- pres.getCurrentPage(pres)
+      page <- PresentationInPod.getCurrentPage(pres)
       pageId: String = if (pollId.contains("deskshare")) "deskshare" else page.id
       stampedPollId: String = pageId + "/" + System.currentTimeMillis()
       numRespondents: Int = Users2x.numUsers(lm.users2x) - 1 // subtract the presenter
@@ -42,7 +42,7 @@ object Polls {
     for {
       pod <- state.presentationPodManager.getDefaultPod()
       pres <- pod.getCurrentPresentation()
-      page <- pres.getCurrentPage(pres)
+      page <- PresentationInPod.getCurrentPage(pres)
       curPoll <- getRunningPollThatStartsWith(page.id, lm.polls)
     } yield {
       stopPoll(curPoll.id, lm.polls)
@@ -51,6 +51,20 @@ object Polls {
   }
 
   def handleShowPollResultReqMsg(state: MeetingState2x, requesterId: String, pollId: String, lm: LiveMeeting): Option[(SimplePollResultOutVO, AnnotationVO)] = {
+    def sanitizeAnnotation(annotation: AnnotationVO): AnnotationVO = {
+      // Remove null values by wrapping value with Option
+      val shape = annotation.annotationInfo.collect {
+        case (key, value: Any) => key -> Option(value)
+      }
+
+      // Unwrap the value wrapped as Option
+      val shape2 = shape.collect {
+        case (key, Some(value)) => key -> value
+      }
+
+      annotation.copy(annotationInfo = shape2)
+    }
+
     def updateWhiteboardAnnotation(annotation: AnnotationVO): AnnotationVO = {
       lm.wbModel.updateAnnotation(annotation.wbId, annotation.userId, annotation)
     }
@@ -59,13 +73,14 @@ object Polls {
       for {
         pod <- state.presentationPodManager.getDefaultPod()
         pres <- pod.getCurrentPresentation()
-        page <- pres.getCurrentPage(pres)
+        page <- PresentationInPod.getCurrentPage(pres)
       } yield {
         val pageId = if (poll.id.contains("deskshare")) "deskshare" else page.id
         val updatedShape = shape + ("whiteboardId" -> pageId)
         val annotation = new AnnotationVO(poll.id, WhiteboardKeyUtil.DRAW_END_STATUS,
           WhiteboardKeyUtil.POLL_RESULT_TYPE, updatedShape, pageId, requesterId, -1)
-        updateWhiteboardAnnotation(annotation)
+        val sanitizedShape = sanitizeAnnotation(annotation)
+        updateWhiteboardAnnotation(sanitizedShape)
       }
     }
 
@@ -79,20 +94,11 @@ object Polls {
     }
   }
 
-  def handleHidePollResultReqMsg(requesterId: String, pollId: String, lm: LiveMeeting): Option[String] = {
-    for {
-      poll <- getPoll(pollId, lm.polls)
-    } yield {
-      hidePollResult(pollId, lm.polls)
-      pollId
-    }
-  }
-
   def handleGetCurrentPollReqMsg(state: MeetingState2x, requesterId: String, lm: LiveMeeting): Option[PollVO] = {
     val poll = for {
       pod <- state.presentationPodManager.getDefaultPod()
       pres <- pod.getCurrentPresentation()
-      page <- pres.getCurrentPage(pres)
+      page <- PresentationInPod.getCurrentPage(pres)
       curPoll <- getRunningPollThatStartsWith(page.id, lm.polls)
     } yield curPoll
 
@@ -111,14 +117,13 @@ object Polls {
   }
 
   def handleRespondToPollReqMsg(requesterId: String, pollId: String, questionId: Int, answerId: Int,
-                                lm: LiveMeeting): Option[(String, String, SimplePollResultOutVO)] = {
+                                lm: LiveMeeting): Option[(String, SimplePollResultOutVO)] = {
 
     for {
-      curPres <- Users2x.findPresenter(lm.users2x)
       poll <- getSimplePollResult(pollId, lm.polls)
       pvo <- handleRespondToPoll(poll, requesterId, pollId, questionId, answerId, lm)
     } yield {
-      (curPres.intId, pollId, pvo)
+      (pollId, pvo)
     }
 
   }
@@ -138,7 +143,7 @@ object Polls {
     for {
       pod <- state.presentationPodManager.getDefaultPod()
       pres <- pod.getCurrentPresentation()
-      page <- pres.getCurrentPage(pres)
+      page <- PresentationInPod.getCurrentPage(pres)
       pageId: String = if (pollId.contains("deskshare")) "deskshare" else page.id
       stampedPollId: String = pageId + "/" + System.currentTimeMillis()
       numRespondents: Int = Users2x.numUsers(lm.users2x) - 1 // subtract the presenter
@@ -189,7 +194,7 @@ object Polls {
     shape += "id" -> result.id
     shape += "status" -> WhiteboardKeyUtil.DRAW_END_STATUS
 
-    var answers = new ArrayBuffer[SimpleVoteOutVO]
+    val answers = new ArrayBuffer[SimpleVoteOutVO]
     result.answers.foreach(ans => {
       answers += SimpleVoteOutVO(ans.id, ans.key, ans.numVotes)
     })
@@ -297,14 +302,6 @@ object Polls {
     pvo
   }
 
-  def hidePollResult(pollId: String, polls: Polls) {
-    polls.get(pollId) foreach {
-      p =>
-        p.hideResult()
-        polls.currentPoll = None
-    }
-  }
-
   def showPollResult(pollId: String, polls: Polls) {
     polls.get(pollId) foreach {
       p =>
@@ -316,7 +313,10 @@ object Polls {
   def respondToQuestion(pollId: String, questionID: Int, responseID: Int, responder: Responder, polls: Polls) {
     polls.polls.get(pollId) match {
       case Some(p) => {
-        p.respondToQuestion(questionID, responseID, responder)
+        if (!p.getResponders().exists(_ == responder)) {
+          p.addResponder(responder)
+          p.respondToQuestion(questionID, responseID, responder)
+        }
       }
       case None =>
     }
@@ -382,7 +382,6 @@ object PollFactory {
 
     if (numQs > 0 && numQs <= 6) {
       val answers = new Array[Answer](numQs)
-      var i = 0
       for (i <- 0 until numQs) {
         answers(i) = new Answer(i, NumberArray(i), Some(NumberArray(i)))
         val question = new Question(0, PollType.NumberPollType, multiResponse, None, answers)
@@ -459,9 +458,9 @@ class Poll(val id: String, val questions: Array[Question], val numRespondents: I
   private var _stopped: Boolean = false
   private var _showResult: Boolean = false
   private var _numResponders: Int = 0
+  private var _responders = new ArrayBuffer[Responder]()
 
   def showingResult() { _showResult = true }
-  def hideResult() { _showResult = false }
   def showResult(): Boolean = { _showResult }
   def start() { _started = true }
   def stop() { _stopped = true }
@@ -473,6 +472,9 @@ class Poll(val id: String, val questions: Array[Question], val numRespondents: I
     _started = false
     _stopped = false
   }
+
+  def addResponder(responder: Responder) { _responders += (responder) }
+  def getResponders(): ArrayBuffer[Responder] = { return _responders }
 
   def hasResponses(): Boolean = {
     questions.foreach(q => {
@@ -595,11 +597,13 @@ class Polls {
     poll
   }
 
+  /*
   private def remove(id: String): Option[Poll] = {
     val poll = polls.get(id)
     poll foreach (p => polls -= id)
     poll
   }
+  */
 
   private def get(id: String): Option[Poll] = {
     polls.get(id)

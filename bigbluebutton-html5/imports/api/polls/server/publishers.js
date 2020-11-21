@@ -1,17 +1,39 @@
 import { Meteor } from 'meteor/meteor';
-import { check } from 'meteor/check';
 import Logger from '/imports/startup/server/logger';
 import Polls from '/imports/api/polls';
-import mapToAcl from '/imports/startup/mapToAcl';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-function polls(credentials) {
-  const { meetingId, requesterUserId, requesterToken } = credentials;
+function currentPoll() {
+  if (!this.userId) {
+    return Polls.find({ meetingId: '' });
+  }
+  const { meetingId } = extractCredentials(this.userId);
 
-  check(meetingId, String);
-  check(requesterUserId, String);
-  check(requesterToken, String);
+  const selector = {
+    meetingId,
+  };
 
-  Logger.info(`Publishing polls =${meetingId} ${requesterUserId} ${requesterToken}`);
+  Logger.debug(`Publishing poll for meeting=${meetingId}`);
+
+  return Polls.find(selector);
+}
+
+function publishCurrentPoll(...args) {
+  const boundPolls = currentPoll.bind(this);
+  return boundPolls(...args);
+}
+
+Meteor.publish('current-poll', publishCurrentPoll);
+
+
+function polls() {
+  if (!this.userId) {
+    return Polls.find({ meetingId: '' });
+  }
+
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
+
+  Logger.debug(`Publishing polls =${meetingId} ${requesterUserId}`);
 
   const selector = {
     meetingId,
@@ -23,8 +45,7 @@ function polls(credentials) {
 
 function publish(...args) {
   const boundPolls = polls.bind(this);
-  return mapToAcl('subscriptions.polls', boundPolls)(args);
+  return boundPolls(...args);
 }
 
 Meteor.publish('polls', publish);
-

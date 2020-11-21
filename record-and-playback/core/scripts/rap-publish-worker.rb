@@ -97,7 +97,7 @@ def publish_processed_meetings(recording_dir)
       metadata_xml_path = "#{published_dir}/#{publish_type}/#{done_base}/metadata.xml"
       if File.exists? metadata_xml_path
         begin
-          doc = Hash.from_xml(File.open(metadata_xml_path))
+          doc = Hash.from_xml(File.read(metadata_xml_path))
           playback = doc[:recording][:playback] if !doc[:recording][:playback].nil?
           metadata = doc[:recording][:meta] if !doc[:recording][:meta].nil?
           download = doc[:recording][:download] if !doc[:recording][:download].nil?
@@ -177,7 +177,8 @@ begin
   props = YAML::load(File.open('bigbluebutton.yml'))
   redis_host = props['redis_host']
   redis_port = props['redis_port']
-  BigBlueButton.redis_publisher = BigBlueButton::RedisWrapper.new(redis_host, redis_port)
+  redis_password = props['redis_password']
+  BigBlueButton.redis_publisher = BigBlueButton::RedisWrapper.new(redis_host, redis_port, redis_password)
 
   log_dir = props['log_dir']
   recording_dir = props['recording_dir']

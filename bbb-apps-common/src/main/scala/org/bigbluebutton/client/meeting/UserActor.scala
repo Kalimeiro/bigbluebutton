@@ -1,37 +1,42 @@
 package org.bigbluebutton.client.meeting
 
-import akka.actor.{Actor, ActorLogging, Props}
-import org.bigbluebutton.client.{ConnInfo, SystemConfiguration}
+import akka.actor.{ Actor, ActorLogging, Props }
+import org.bigbluebutton.client.{ ConnInfo, SystemConfiguration }
 import org.bigbluebutton.client.bus._
 import org.bigbluebutton.common2.msgs._
 import org.bigbluebutton.common2.util.JsonUtil
 import com.fasterxml.jackson.databind.JsonNode
 
-import scala.util.{Failure, Success}
+import scala.util.{ Failure, Success }
 
 object UserActor {
-  def props(userId: String,
-            msgToAkkaAppsEventBus: MsgToAkkaAppsEventBus,
-            meetingId: String,
-            msgToClientEventBus: MsgToClientEventBus): Props =
-    Props(classOf[UserActor], userId, msgToAkkaAppsEventBus, meetingId, msgToClientEventBus)
+  def props(
+      userId:              String,
+      msgToRedisEventBus:  MsgToRedisEventBus,
+      meetingId:           String,
+      msgToClientEventBus: MsgToClientEventBus
+  ): Props =
+    Props(classOf[UserActor], userId, msgToRedisEventBus, meetingId, msgToClientEventBus)
 }
 
-class UserActor(val userId: String,
-                msgToAkkaAppsEventBus: MsgToAkkaAppsEventBus,
-                meetingId: String,
-                msgToClientEventBus: MsgToClientEventBus)
+class UserActor(
+    val userId:          String,
+    msgToRedisEventBus:  MsgToRedisEventBus,
+    meetingId:           String,
+    msgToClientEventBus: MsgToClientEventBus
+)
   extends Actor with ActorLogging with SystemConfiguration {
 
   private val conns = new Connections
+  private var authorized = false
 
   def receive = {
 
-    case msg: ConnectMsg => handleConnectMsg(msg)
-    case msg: DisconnectMsg => handleDisconnectMsg(msg)
-    case msg: MsgFromClientMsg => handleMsgFromClientMsg(msg, true)
+    case msg: ConnectMsg            => handleConnectMsg(msg)
+    case msg: DisconnectMsg         => handleDisconnectMsg(msg)
+    case msg: MsgFromClientMsg      => handleMsgFromClientMsg(msg, true)
     case msg: BbbCommonEnvJsNodeMsg => handleBbbServerMsg(msg)
-    case _ => log.debug("***** UserActor cannot handle msg ")
+    case _                          => log.debug("***** UserActor cannot handle msg ")
   }
 
   private def createConnection(id: String, sessionId: String, active: Boolean): Connection = {
@@ -51,6 +56,7 @@ class UserActor(val userId: String,
         val m = createConnection(msg.connInfo.connId, msg.connInfo.sessionId, true)
         log.debug("**** UserActor create connection " + m.connId)
         Connections.add(conns, m)
+        authorized = false
     }
   }
 
@@ -90,11 +96,12 @@ class UserActor(val userId: String,
     handleMsgFromClientMsg(msgFromClient, false)
   }
 
-  def handleMsgFromClientMsg(msg: MsgFromClientMsg, applyWhitelist: Boolean):Unit = {
+  def handleMsgFromClientMsg(msg: MsgFromClientMsg, applyWhitelist: Boolean): Unit = {
     def convertToJsonNode(json: String): Option[JsonNode] = {
       JsonUtil.toJsonNode(json) match {
         case Success(jsonNode) => Some(jsonNode)
-        case Failure(ex) => log.error("Failed to process client message body " + ex)
+        case Failure(ex) =>
+          log.error("Failed to process client message body " + ex)
           None
       }
     }
@@ -119,20 +126,20 @@ class UserActor(val userId: String,
           // will prevent spoofing of messages. (ralam oct 30, 2017)
           val newHeader = BbbClientMsgHeader(msgFromClient.header.name, meetingId, userId)
           val msgClient = msgFromClient.copy(header = newHeader)
-          
+
           val routing = Routing.addMsgFromClientRouting(msgClient.header.meetingId, msgClient.header.userId)
-          val envelope = new BbbCoreEnvelope(msgClient.header.name, routing)
-  
+          val envelope = new BbbCoreEnvelope(msgClient.header.name, routing, System.currentTimeMillis())
+
           if (msgClient.header.name == "ClientToServerLatencyTracerMsg") {
             log.info("-- trace -- " + msg.json)
           }
-  
+
           val json = JsonUtil.toJson(msgClient)
           for {
             jsonNode <- convertToJsonNode(json)
           } yield {
-            val akkaMsg = BbbCommonEnvJsNodeMsg(envelope, jsonNode)
-            msgToAkkaAppsEventBus.publish(MsgToAkkaApps(toAkkaAppsChannel, akkaMsg))
+            val jsNodeMsg = BbbCommonEnvJsNodeMsg(envelope, jsonNode)
+            msgToRedisEventBus.publish(MsgToRedis(toRedisChannel, jsNodeMsg))
           }
         }
       case None =>
@@ -150,20 +157,33 @@ class UserActor(val userId: String,
   }
 
   def handleServerMsg(msgType: String, msg: BbbCommonEnvJsNodeMsg): Unit = {
-   // log.debug("**** UserActor handleServerMsg " + msg)
+    // log.debug("**** UserActor handleServerMsg " + msg)
     msgType match {
-      case MessageTypes.DIRECT => handleDirectMessage(msg)
+      case MessageTypes.DIRECT               => handleDirectMessage(msg)
       case MessageTypes.BROADCAST_TO_MEETING => handleBroadcastMessage(msg)
-      case MessageTypes.SYSTEM => handleSystemMessage(msg)
+      case MessageTypes.SYSTEM               => handleSystemMessage(msg)
     }
   }
 
   private def forwardToUser(msg: BbbCommonEnvJsNodeMsg): Unit = {
-    //log.debug("UserActor forwardToUser. Forwarding to connection. " + msg)
+    //println("UserActor forwardToUser. Forwarding to connection. " + msg)
     for {
       conn <- Connections.findActiveConnection(conns)
     } yield {
-      msgToClientEventBus.publish(MsgToClientBusMsg(toClientChannel, DirectMsgToClient(meetingId, conn.connId, msg)))
+      msg.envelope.name match {
+        case ValidateAuthTokenRespMsg.NAME =>
+          val core = msg.core.asInstanceOf[JsonNode]
+          val body = core.get("body")
+          val valid = body.get("valid")
+          if (valid.asBoolean) {
+            authorized = true
+          }
+        case _ => // let it pass through
+      }
+      if (authorized) {
+        msgToClientEventBus.publish(MsgToClientBusMsg(toClientChannel, DirectMsgToClient(meetingId, conn.connId, msg)))
+      }
+
     }
   }
 
@@ -184,6 +204,7 @@ class UserActor(val userId: String,
       msg.envelope.name match {
         case DisconnectClientSysMsg.NAME =>
           msgToClientEventBus.publish(MsgToClientBusMsg(toClientChannel, DisconnectClientMsg(meetingId, conn.connId)))
+        case _ => log.warning("Unhandled system messsage " + msg)
       }
     }
   }

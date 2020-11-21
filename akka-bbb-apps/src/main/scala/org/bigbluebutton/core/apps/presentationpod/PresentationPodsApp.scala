@@ -11,9 +11,8 @@ object PresentationPodsApp {
     PresentationPodFactory.create(creatorId)
   }
 
-  def createDefaultPresentationPod(state: MeetingState2x): MeetingState2x = {
-    val podManager = state.presentationPodManager.addPod(PresentationPodFactory.createDefaultPod())
-    state.update(podManager)
+  def createDefaultPresentationPod(): PresentationPod = {
+    PresentationPodFactory.createDefaultPod()
   }
 
   def removePresentationPod(state: MeetingState2x, podId: String): MeetingState2x = {
@@ -25,6 +24,15 @@ object PresentationPodsApp {
     state.presentationPodManager.getPod(podId)
   }
 
+  def getPresentationPodIfPresenter(state: MeetingState2x, podId: String, userId: String): Option[PresentationPod] = {
+    for {
+      pod <- getPresentationPod(state, podId)
+      if pod.currentPresenter == userId
+    } yield {
+      pod
+    }
+  }
+
   def getAllPresentationPodsInMeeting(state: MeetingState2x): Vector[PresentationPod] = {
     state.presentationPodManager.getAllPresentationPodsInMeeting()
   }
@@ -33,10 +41,32 @@ object PresentationPodsApp {
 
   def translatePresentationPodToVO(pod: PresentationPod): PresentationPodVO = {
     val presentationObjects = pod.presentations
-    val presentationVOs = presentationObjects.values.map(p => PresentationVO(p.id, p.name, p.current,
-      p.pages.values.toVector, p.downloadable)).toVector
+    val presentationVOs = presentationObjects.values.map { p =>
+      val pages = p.pages.values.map { page =>
+        PageVO(
+          id = page.id,
+          num = page.num,
+          thumbUri = page.urls.getOrElse("thumb", ""),
+          swfUri = page.urls.getOrElse("swf", ""),
+          txtUri = page.urls.getOrElse("text", ""),
+          svgUri = page.urls.getOrElse("svg", ""),
+          current = page.current,
+          xOffset = page.xOffset,
+          yOffset = page.yOffset,
+          widthRatio = page.widthRatio,
+          heightRatio = page.heightRatio
+        )
+      }
 
-    PresentationPodVO(pod.id, pod.currentPresenter, presentationVOs)
+      PresentationVO(p.id, p.name, p.current,
+        pages.toVector, p.downloadable)
+    }
+
+    PresentationPodVO(pod.id, pod.currentPresenter, presentationVOs.toVector)
+  }
+
+  def findPodsWhereUserIsPresenter(mgr: PresentationPodManager, userId: String): Vector[PresentationPod] = {
+    mgr.presentationPods.values.toVector.filter(p => p.currentPresenter == userId)
   }
 
   def updatePresentationPod(state: MeetingState2x, pod: PresentationPod): MeetingState2x = {
@@ -45,7 +75,22 @@ object PresentationPodsApp {
   }
 
   def translatePresentationToPresentationVO(pres: PresentationInPod): PresentationVO = {
-    PresentationVO(pres.id, pres.name, pres.current, pres.pages.values.toVector, pres.downloadable)
+    val pages = pres.pages.values.map { page =>
+      PageVO(
+        id = page.id,
+        num = page.num,
+        thumbUri = page.urls.getOrElse("thumb", ""),
+        swfUri = page.urls.getOrElse("swf", ""),
+        txtUri = page.urls.getOrElse("text", ""),
+        svgUri = page.urls.getOrElse("svg", ""),
+        current = page.current,
+        xOffset = page.xOffset,
+        yOffset = page.yOffset,
+        widthRatio = page.widthRatio,
+        heightRatio = page.heightRatio
+      )
+    }
+    PresentationVO(pres.id, pres.name, pres.current, pages.toVector, pres.downloadable)
   }
 
   def setCurrentPresentationInPod(state: MeetingState2x, podId: String, nextCurrentPresId: String): Option[PresentationPod] = {
@@ -58,7 +103,7 @@ object PresentationPodsApp {
   }
 
   def generateToken(podId: String, userId: String): String = {
-    "LALA-" + RandomStringGenerator.randomAlphanumericString(8) + podId + "-" + userId
+    "PresUploadToken-" + RandomStringGenerator.randomAlphanumericString(8) + podId + "-" + userId
   }
 }
 

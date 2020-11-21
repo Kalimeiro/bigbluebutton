@@ -10,8 +10,8 @@ trait SetCurrentPresentationPubMsgHdlr extends RightsManagementTrait {
   this: PresentationPodHdlrs =>
 
   def handle(
-    msg: SetCurrentPresentationPubMsg, state: MeetingState2x,
-    liveMeeting: LiveMeeting, bus: MessageBus
+      msg: SetCurrentPresentationPubMsg, state: MeetingState2x,
+      liveMeeting: LiveMeeting, bus: MessageBus
   ): MeetingState2x = {
 
     if (filterPresentationMessage(liveMeeting.users2x, msg.header.userId) &&
@@ -34,11 +34,13 @@ trait SetCurrentPresentationPubMsgHdlr extends RightsManagementTrait {
 
       val podId = msg.body.podId
       val presId = msg.body.presentationId
+      val userId = msg.header.userId
 
       val newState = for {
-        updatedPod <- PresentationPodsApp.setCurrentPresentationInPod(state, podId, presId)
+        pod <- PresentationPodsApp.getPresentationPodIfPresenter(state, podId, userId)
+        updatedPod <- pod.setCurrentPresentation(presId)
       } yield {
-        broadcastSetCurrentPresentationEvent(podId, msg.header.userId, presId)
+        broadcastSetCurrentPresentationEvent(podId, userId, presId)
 
         val pods = state.presentationPodManager.addPod(updatedPod)
         state.update(pods)

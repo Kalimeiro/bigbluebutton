@@ -1,11 +1,15 @@
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import styles from '../styles.scss';
 
 const ANNOTATION_CONFIG = Meteor.settings.public.whiteboard.annotations;
 const DRAW_START = ANNOTATION_CONFIG.status.start;
 const DRAW_UPDATE = ANNOTATION_CONFIG.status.update;
 const DRAW_END = ANNOTATION_CONFIG.status.end;
+const DEFAULT_TEXT_WIDTH = 30;
+const DEFAULT_TEXT_HEIGHT = 20;
+
+// maximum value of z-index to prevent other things from overlapping
+const MAX_Z_INDEX = (2 ** 31) - 1;
 
 export default class TextDrawListener extends Component {
   constructor() {
@@ -39,11 +43,23 @@ export default class TextDrawListener extends Component {
     // current text shape status, it may change between DRAW_START, DRAW_UPDATE, DRAW_END
     this.currentStatus = '';
 
+    // Mobile Firefox has a bug where e.preventDefault on touchstart doesn't prevent
+    // onmousedown from triggering right after. Thus we have to track it manually.
+    // In case if it's fixed one day - there is another issue, React one.
+    // https://github.com/facebook/react/issues/9809
+    // Check it to figure if you can add onTouchStart in render(), or should use raw DOM api
+    this.hasBeenTouchedRecently = false;
+
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.resetState = this.resetState.bind(this);
     this.sendLastMessage = this.sendLastMessage.bind(this);
+    this.handleTouchStart = this.handleTouchStart.bind(this);
+    this.handleTouchMove = this.handleTouchMove.bind(this);
+    this.handleTouchEnd = this.handleTouchEnd.bind(this);
+    this.handleTouchCancel = this.handleTouchCancel.bind(this);
+    this.checkTextAreaFocus = this.checkTextAreaFocus.bind(this);
   }
 
   componentDidMount() {
@@ -63,7 +79,11 @@ export default class TextDrawListener extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    const { drawSettings } = this.props;
+    const {
+      drawSettings,
+      actions,
+    } = this.props;
+
     const prevDrawsettings = prevProps.drawSettings;
     const prevTextShapeValue = prevProps.drawSettings.textShapeValue;
 
@@ -76,7 +96,7 @@ export default class TextDrawListener extends Component {
     const textShapeIdNotEmpty = drawSettings.textShapeActiveId !== '';
 
     if ((fontSizeChanged || colorChanged || textShapeValueChanged) && textShapeIdNotEmpty) {
-      const { getCurrentShapeId } = this.props.actions;
+      const { getCurrentShapeId } = actions;
       this.currentStatus = DRAW_UPDATE;
 
       this.handleDrawText(
@@ -92,60 +112,173 @@ export default class TextDrawListener extends Component {
 
   componentWillUnmount() {
     window.removeEventListener('beforeunload', this.sendLastMessage);
-    window.removeEventListener('mouseup', this.handleMouseUp);
-    window.removeEventListener('mousemove', this.handleMouseMove, true);
-
     // sending the last message on componentDidUnmount
     // for example in case when you switched a tool while drawing text shape
     this.sendLastMessage();
   }
 
+  // checks if the input textarea is focused or not, and if not - moves focus there
+  // returns false if text area wasn't focused
+  // returns true if textarea was focused
+  // currently used only with iOS devices
+  checkTextAreaFocus() {
+    const {
+      actions,
+    } = this.props;
+
+    const { getCurrentShapeId } = actions;
+
+    const textarea = document.getElementById(getCurrentShapeId());
+
+    if (textarea) {
+      if (document.activeElement === textarea) {
+        return true;
+      }
+      textarea.focus();
+    }
+
+    return false;
+  }
+
+  handleTouchStart(event) {
+    const {
+      isDrawing,
+      isWritingText,
+    } = this.state;
+
+    this.hasBeenTouchedRecently = true;
+    setTimeout(() => { this.hasBeenTouchedRecently = false; }, 500);
+    // to prevent default behavior (scrolling) on devices (in Safari), when you draw a text box
+    event.preventDefault();
+
+
+    // if our current drawing state is not drawing the box and not writing the text
+    if (!isDrawing && !isWritingText) {
+      window.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+      window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+      window.addEventListener('touchcancel', this.handleTouchCancel, true);
+
+      const { clientX, clientY } = event.changedTouches[0];
+      this.commonDrawStartHandler(clientX, clientY);
+
+    // this case is specifically for iOS, since text shape is working in 3 steps there:
+    // touch to draw a box -> tap to focus -> tap to publish
+    } else if (!isDrawing && isWritingText && !this.checkTextAreaFocus()) {
+
+    // if you switch to a different window using Alt+Tab while mouse is down and release it
+    // it wont catch mouseUp and will keep tracking the movements. Thus we need this check.
+    } else {
+      this.sendLastMessage();
+    }
+  }
+
+  handleTouchMove(event) {
+    event.preventDefault();
+    const { clientX, clientY } = event.changedTouches[0];
+    this.commonDrawMoveHandler(clientX, clientY);
+  }
+
+  handleTouchEnd() {
+    window.removeEventListener('touchend', this.handleTouchEnd, { passive: false });
+    window.removeEventListener('touchmove', this.handleTouchMove, { passive: false });
+    window.removeEventListener('touchcancel', this.handleTouchCancel, true);
+    this.commonDrawEndHandler();
+  }
+
+  handleTouchCancel() {
+    window.removeEventListener('touchend', this.handleTouchEnd, { passive: false });
+    window.removeEventListener('touchmove', this.handleTouchMove, { passive: false });
+    window.removeEventListener('touchcancel', this.handleTouchCancel, true);
+    this.commonDrawEndHandler();
+  }
+
   // main mouse down handler
   handleMouseDown(event) {
-    this.mouseDownText(event);
-  }
+    const {
+      isDrawing,
+      isWritingText,
+    } = this.state;
 
-  // main mouse up handler
-  handleMouseUp(event) {
-    window.removeEventListener('mouseup', this.handleMouseUp);
-    window.removeEventListener('mousemove', this.handleMouseMove, true);
-    this.mouseUpText(event);
-  }
+    const isLeftClick = event.button === 0;
+    const isRightClick = event.button === 2;
 
-  // main mouse move handler
-  handleMouseMove(event) {
-    this.mouseMoveText(event);
-  }
+    if (this.hasBeenTouchedRecently) {
+      return;
+    }
 
-  mouseDownText(event) {
     // if our current drawing state is not drawing the box and not writing the text
-    if (!this.state.isDrawing && !this.state.isWritingText) {
-      window.addEventListener('mouseup', this.handleMouseUp);
-      window.addEventListener('mousemove', this.handleMouseMove, true);
+    if (!isDrawing && !isWritingText) {
+      if (isLeftClick) {
+        window.addEventListener('mouseup', this.handleMouseUp);
+        window.addEventListener('mousemove', this.handleMouseMove, true);
 
-      // saving initial X and Y coordinates for further displaying of the textarea
-      this.initialX = event.nativeEvent.offsetX;
-      this.initialY = event.nativeEvent.offsetY;
-
-      this.setState({
-        textBoxX: event.nativeEvent.offsetX,
-        textBoxY: event.nativeEvent.offsetY,
-        isDrawing: true,
-      });
+        const { clientX, clientY } = event;
+        this.commonDrawStartHandler(clientX, clientY);
+      }
 
     // second case is when a user finished writing the text and publishes the final result
     } else {
       // publishing the final shape and resetting the state
       this.sendLastMessage();
+      if (isRightClick) {
+        this.discardAnnotation();
+      }
     }
   }
 
+  // main mouse move handler
+  handleMouseMove(event) {
+    const { clientX, clientY } = event;
+    this.commonDrawMoveHandler(clientX, clientY);
+  }
+
+  // main mouse up handler
+  handleMouseUp() {
+    window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('mousemove', this.handleMouseMove, true);
+    this.commonDrawEndHandler();
+  }
+
+  commonDrawStartHandler(clientX, clientY) {
+    const {
+      actions,
+    } = this.props;
+
+    const {
+      getTransformedSvgPoint,
+    } = actions;
+
+    const transformedSvgPoint = getTransformedSvgPoint(clientX, clientY);
+
+    // saving initial X and Y coordinates for further displaying of the textarea
+    this.initialX = transformedSvgPoint.x;
+    this.initialY = transformedSvgPoint.y;
+
+    this.setState({
+      textBoxX: transformedSvgPoint.x,
+      textBoxY: transformedSvgPoint.y,
+      isDrawing: true,
+    });
+  }
+
   sendLastMessage() {
-    if (!this.state.isWritingText) {
+    const {
+      drawSettings,
+      actions,
+    } = this.props;
+
+    const {
+      isWritingText,
+    } = this.state;
+
+    if (!isWritingText) {
       return;
     }
 
-    const { getCurrentShapeId } = this.props.actions;
+    const {
+      getCurrentShapeId,
+    } = actions;
+
     this.currentStatus = DRAW_END;
 
     this.handleDrawText(
@@ -154,15 +287,26 @@ export default class TextDrawListener extends Component {
       this.currentHeight,
       this.currentStatus,
       getCurrentShapeId(),
-      this.props.drawSettings.textShapeValue,
+      drawSettings.textShapeValue,
     );
 
     this.resetState();
   }
 
   resetState() {
+    const {
+      actions,
+    } = this.props;
+    // resetting the current drawing state
+    window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('mousemove', this.handleMouseMove, true);
+    // touchend, touchmove and touchcancel are removed on devices
+    window.removeEventListener('touchend', this.handleTouchEnd, { passive: false });
+    window.removeEventListener('touchmove', this.handleTouchMove, { passive: false });
+    window.removeEventListener('touchcancel', this.handleTouchCancel, true);
+
     // resetting the text shape session values
-    this.props.actions.resetTextShapeSession();
+    actions.resetTextShapeSession();
     // resetting the current state
     this.currentX = undefined;
     this.currentY = undefined;
@@ -182,11 +326,17 @@ export default class TextDrawListener extends Component {
     });
   }
 
-  mouseMoveText(event) {
-    const { checkIfOutOfBounds, getTransformedSvgPoint } = this.props.actions;
+  commonDrawMoveHandler(clientX, clientY) {
+    const {
+      actions,
+    } = this.props;
+    const {
+      checkIfOutOfBounds,
+      getTransformedSvgPoint,
+    } = actions;
 
     // get the transformed svg coordinate
-    let transformedSvgPoint = getTransformedSvgPoint(event);
+    let transformedSvgPoint = getTransformedSvgPoint(clientX, clientY);
 
     // check if it's out of bounds
     transformedSvgPoint = checkIfOutOfBounds(transformedSvgPoint);
@@ -196,10 +346,10 @@ export default class TextDrawListener extends Component {
     const y = transformedSvgPoint.y < this.initialY ? transformedSvgPoint.y : this.initialY;
 
     // calculating the width and height of the displayed text box
-    const width = transformedSvgPoint.x > this.initialX ?
-        transformedSvgPoint.x - this.initialX : this.initialX - transformedSvgPoint.x;
-    const height = transformedSvgPoint.y > this.initialY ?
-        transformedSvgPoint.y - this.initialY : this.initialY - transformedSvgPoint.y;
+    const width = transformedSvgPoint.x > this.initialX
+      ? transformedSvgPoint.x - this.initialX : this.initialX - transformedSvgPoint.x;
+    const height = transformedSvgPoint.y > this.initialY
+      ? transformedSvgPoint.y - this.initialY : this.initialY - transformedSvgPoint.y;
 
     this.setState({
       textBoxWidth: width,
@@ -210,23 +360,60 @@ export default class TextDrawListener extends Component {
   }
 
 
-  mouseUpText() {
+  commonDrawEndHandler() {
+    const {
+      actions,
+      slideWidth,
+      slideHeight,
+      drawSettings,
+    } = this.props;
+
+    const {
+      isDrawing,
+      isWritingText,
+      textBoxX,
+      textBoxY,
+      textBoxWidth,
+      textBoxHeight,
+    } = this.state;
+
     // TODO - find if the size is large enough to display the text area
-    if (!this.state.isDrawing && this.state.isWritingText) {
+    if (!isDrawing && isWritingText) {
       return;
     }
 
-    const { generateNewShapeId,
+    const {
+      generateNewShapeId,
       getCurrentShapeId,
       setTextShapeActiveId,
-    } = this.props.actions;
+      normalizeFont,
+    } = actions;
+
+    const {
+      textFontSize,
+    } = drawSettings;
+
+    const calcedFontSize = normalizeFont(textFontSize);
+    let calcedTextBoxWidth = (textBoxWidth / slideWidth) * 100;
+    let calcedTextBoxHeight = (textBoxHeight / slideHeight) * 100;
+    const useDefaultSize = (textBoxWidth === 0 && textBoxHeight === 0)
+    || calcedTextBoxWidth < calcedFontSize
+    || calcedTextBoxHeight < calcedFontSize;
 
     // coordinates and width/height of the textarea in percentages of the current slide
     // saving them in the class since they will be used during all updates
-    this.currentX = (this.state.textBoxX / this.props.slideWidth) * 100;
-    this.currentY = (this.state.textBoxY / this.props.slideHeight) * 100;
-    this.currentWidth = (this.state.textBoxWidth / this.props.slideWidth) * 100;
-    this.currentHeight = (this.state.textBoxHeight / this.props.slideHeight) * 100;
+    this.currentX = (textBoxX / slideWidth) * 100;
+    this.currentY = (textBoxY / slideHeight) * 100;
+
+    if (useDefaultSize) {
+      calcedTextBoxWidth = DEFAULT_TEXT_WIDTH;
+      calcedTextBoxHeight = DEFAULT_TEXT_HEIGHT;
+      if (100 - this.currentX < calcedTextBoxWidth) calcedTextBoxWidth = 100 - this.currentX;
+      if (100 - this.currentY < calcedTextBoxHeight) calcedTextBoxHeight = 100 - this.currentY;
+    }
+
+    this.currentWidth = calcedTextBoxWidth;
+    this.currentHeight = calcedTextBoxHeight;
     this.currentStatus = DRAW_START;
     this.handleDrawText(
       { x: this.currentX, y: this.currentY },
@@ -250,7 +437,22 @@ export default class TextDrawListener extends Component {
   }
 
   handleDrawText(startPoint, width, height, status, id, text) {
-    const { normalizeFont, sendAnnotation } = this.props.actions;
+    const {
+      whiteboardId,
+      userId,
+      actions,
+      drawSettings,
+    } = this.props;
+
+    const {
+      normalizeFont,
+      sendAnnotation,
+    } = actions;
+
+    const {
+      color,
+      textFontSize,
+    } = drawSettings;
 
     const annotation = {
       id,
@@ -259,53 +461,98 @@ export default class TextDrawListener extends Component {
       annotationInfo: {
         x: startPoint.x, // left corner
         y: startPoint.y, // left corner
-        fontColor: this.props.drawSettings.color,
-        calcedFontSize: normalizeFont(this.props.drawSettings.textFontSize), // fontsize
+        fontColor: color,
+        calcedFontSize: normalizeFont(textFontSize), // fontsize
         textBoxWidth: width, // width
         text,
         textBoxHeight: height, // height
         id,
-        whiteboardId: this.props.whiteboardId,
+        whiteboardId,
         status,
-        fontSize: this.props.drawSettings.textFontSize,
+        fontSize: textFontSize,
         dataPoints: `${startPoint.x},${startPoint.y}`,
         type: 'text',
       },
-      wbId: this.props.whiteboardId,
-      userId: this.props.userId,
+      wbId: whiteboardId,
+      userId,
       position: 0,
     };
 
-    sendAnnotation(annotation);
+    sendAnnotation(annotation, whiteboardId);
+  }
+
+  discardAnnotation() {
+    const {
+      whiteboardId,
+      actions,
+    } = this.props;
+
+    const {
+      getCurrentShapeId,
+      addAnnotationToDiscardedList,
+      undoAnnotation,
+    } = actions;
+
+    undoAnnotation(whiteboardId);
+    addAnnotationToDiscardedList(getCurrentShapeId());
   }
 
   render() {
+    const {
+      actions,
+    } = this.props;
+
+    const {
+      textBoxX,
+      textBoxY,
+      textBoxWidth,
+      textBoxHeight,
+      isWritingText,
+      isDrawing,
+    } = this.state;
+
+    const { contextMenuHandler } = actions;
+
+    const baseName = Meteor.settings.public.app.cdn + Meteor.settings.public.app.basename;
+    const textDrawStyle = {
+      width: '100%',
+      height: '100%',
+      touchAction: 'none',
+      zIndex: MAX_Z_INDEX,
+      cursor: `url('${baseName}/resources/images/whiteboard-cursor/text.png'), default`,
+    };
+
     return (
       <div
         role="presentation"
-        className={styles.text}
-        style={{ width: '100%', height: '100%' }}
+        style={textDrawStyle}
         onMouseDown={this.handleMouseDown}
+        onTouchStart={this.handleTouchStart}
+        onContextMenu={contextMenuHandler}
       >
-        {this.state.isDrawing ?
-          <svg
-            width="100%"
-            height="100%"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            {!this.state.isWritingText ?
-              <rect
-                x={this.state.textBoxX}
-                y={this.state.textBoxY}
-                fill="none"
-                stroke="black"
-                strokeWidth="1"
-                width={this.state.textBoxWidth}
-                height={this.state.textBoxHeight}
-              />
-            : null }
-          </svg>
-        : null }
+        {isDrawing
+          ? (
+            <svg
+              width="100%"
+              height="100%"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              {!isWritingText
+                ? (
+                  <rect
+                    x={textBoxX}
+                    y={textBoxY}
+                    fill="none"
+                    stroke="black"
+                    strokeWidth="1"
+                    width={textBoxWidth}
+                    height={textBoxHeight}
+                  />
+                )
+                : null }
+            </svg>
+          )
+          : null }
       </div>
     );
   }

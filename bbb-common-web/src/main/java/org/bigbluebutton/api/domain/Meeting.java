@@ -19,11 +19,17 @@
 
 package org.bigbluebutton.api.domain;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.apache.commons.lang3.RandomStringUtils;
+import java.util.concurrent.locks.Lock;
 
+import org.apache.commons.lang3.RandomStringUtils;
 
 public class Meeting {
 
@@ -35,7 +41,8 @@ public class Meeting {
 	private String intMeetingId;
 	private String parentMeetingId = "bbb-none"; // Initialize so we don't send null in the json message.
 	private Integer sequence = 0;
-	private Integer duration = 0;	 
+	private Boolean freeJoin = false;
+    private Integer duration = 0;	 
 	private long createdTime = 0;
 	private long startTime = 0;
 	private long endTime = 0;
@@ -55,6 +62,7 @@ public class Meeting {
 	private boolean record;
 	private boolean autoStartRecording = false;
 	private boolean allowStartStopRecording = false;
+	private boolean haveRecordingMarks = false;
 	private boolean webcamsOnlyForModerator = false;
 	private String dialNumber;
 	private String defaultAvatarURL;
@@ -65,14 +73,32 @@ public class Meeting {
 	private Map<String, Object> userCustomData;
 	private final ConcurrentMap<String, User> users;
 	private final ConcurrentMap<String, RegisteredUser> registeredUsers;
+	private final ConcurrentMap<String, Long> enteredUsers;
 	private final ConcurrentMap<String, Config> configs;
 	private final Boolean isBreakout;
-	private final List<String> breakoutRooms = new ArrayList<String>();
+	private final List<String> breakoutRooms = new ArrayList<>();
+	private String customLogoURL = "";
+	private String customCopyright = "";
+	private Boolean muteOnStart = false;
+	private Boolean allowModsToUnmuteUsers = false;
 
 	private Integer maxInactivityTimeoutMinutes = 120;
 	private Integer warnMinutesBeforeMax = 5;
 	private Integer meetingExpireIfNoUserJoinedInMinutes = 5;
 	private Integer meetingExpireWhenLastUserLeftInMinutes = 1;
+	private Integer userInactivityInspectTimerInMinutes = 120;
+	private Integer userInactivityThresholdInMinutes = 30;
+    private Integer userActivitySignResponseDelayInMinutes = 5;
+
+	public final BreakoutRoomsParams breakoutRoomsParams;
+	public final LockSettingsParams lockSettingsParams;
+
+	public final Boolean allowDuplicateExtUserid;
+
+	private String meetingEndedCallbackURL = "";
+
+	public final Boolean endWhenNoModerator;
+
 
     public Meeting(Meeting.Builder builder) {
         name = builder.name;
@@ -100,13 +126,18 @@ public class Meeting {
         createdTime = builder.createdTime;
         isBreakout = builder.isBreakout;
         guestPolicy = builder.guestPolicy;
+        breakoutRoomsParams = builder.breakoutRoomsParams;
+        lockSettingsParams = builder.lockSettingsParams;
+        allowDuplicateExtUserid = builder.allowDuplicateExtUserid;
+        endWhenNoModerator = builder.endWhenNoModerator;
 
-        userCustomData = new HashMap<String, Object>();
+        userCustomData = new HashMap<>();
 
-        users = new ConcurrentHashMap<String, User>();
-        registeredUsers = new ConcurrentHashMap<String, RegisteredUser>();
+        users = new ConcurrentHashMap<>();
+        registeredUsers = new ConcurrentHashMap<>();
+        enteredUsers = new  ConcurrentHashMap<>();;
 
-        configs = new ConcurrentHashMap<String, Config>();
+        configs = new ConcurrentHashMap<>();
     }
 
 	public void addBreakoutRoom(String meetingId) {
@@ -204,14 +235,22 @@ public class Meeting {
 		return createdTime;
 	}
 
-	public Integer setSequence(Integer s) {
-        return sequence = s;
+	public void setSequence(Integer s) {
+        sequence = s;
     }
 
 	public Integer getSequence() {
         return sequence;
     }
 
+    public Boolean isFreeJoin() {
+        return freeJoin;
+    }
+
+    public void setFreeJoin(Boolean freeJoin) {
+        this.freeJoin = freeJoin;
+    }
+	
 	public Integer getDuration() {
 		return duration;
 	}
@@ -239,7 +278,15 @@ public class Meeting {
 	public Boolean isBreakout() {
 	  return isBreakout;
 	}
+	
+    public void setHaveRecordingMarks(boolean marks) {
+        haveRecordingMarks = marks;
+    }
 
+    public boolean haveRecordingMarks() {
+        return  haveRecordingMarks;
+    }
+    
 	public String getName() {
 		return name;
 	}
@@ -260,8 +307,8 @@ public class Meeting {
 		return intMeetingId;
 	}
 
-	public String setParentMeetingId(String p) {
-        return parentMeetingId = p;
+	public void setParentMeetingId(String p) {
+        parentMeetingId = p;
     }
 
 	public String getParentMeetingId() {
@@ -306,35 +353,27 @@ public class Meeting {
 
 
 	public String calcGuestStatus(String role, Boolean guest, Boolean authned) {
-    	if (GuestPolicy.ALWAYS_ACCEPT.equals(guestPolicy)) {
-    		return GuestPolicy.ALLOW;
+		// Allow moderators all the time.
+		if (ROLE_MODERATOR.equals(role)) {
+			return GuestPolicy.ALLOW;
+		}
+
+		if (GuestPolicy.ALWAYS_ACCEPT.equals(guestPolicy)) {
+			return GuestPolicy.ALLOW;
 		} else if (GuestPolicy.ALWAYS_DENY.equals(guestPolicy)) {
-    		return GuestPolicy.DENY;
-		}
-
-		if (ROLE_MODERATOR.equals(role.toUpperCase())) {
-    		return GuestPolicy.ALLOW;
-		} else if (guest || ROLE_ATTENDEE.equals(role.toUpperCase())) {
-			String policy = getGuestPolicy();
-			switch (policy){
-				case GuestPolicy.ASK_MODERATOR:
-					return GuestPolicy.WAIT ;
-				case GuestPolicy.ALWAYS_ACCEPT:
-					return GuestPolicy.ALLOW ;
-					//Do not ask to join
-				case GuestPolicy.ALWAYS_ACCEPT_AUTH:
-					if (authned){
-						//If user is authenticated allow.
-						return GuestPolicy.ALLOW ;
-					}else{
-						//Else ask for permission
-						return GuestPolicy.WAIT ;
-					}
-				case GuestPolicy.ALWAYS_DENY:
-					return GuestPolicy.DENY;
+			return GuestPolicy.DENY;
+		} else if (GuestPolicy.ASK_MODERATOR.equals(guestPolicy)) {
+			if  (guest || (!ROLE_MODERATOR.equals(role) && authned)) {
+				return GuestPolicy.WAIT ;
 			}
+			return GuestPolicy.ALLOW;
+		} else if (GuestPolicy.ALWAYS_ACCEPT_AUTH.equals(guestPolicy)) {
+			if (guest){
+				// Only ask moderator for guests.
+				return GuestPolicy.WAIT ;
+			}
+			return GuestPolicy.ALLOW;
 		}
-
 		return GuestPolicy.DENY ;
 	}
 
@@ -378,64 +417,125 @@ public class Meeting {
 	public boolean hasUserJoined() {
 		return userHasJoined;
 	}
-	
-	public void userJoined(User user) {
-	    userHasJoined = true;
-	    this.users.put(user.getInternalUserId(), user);
+
+	public String getCustomLogoURL() {
+		return customLogoURL;
 	}
 
-	public User userLeft(String userid){
-		User u = (User) users.remove(userid);	
-		return u;
+	public void setCustomLogoURL(String url) {
+		customLogoURL = url;
+	}
+
+	public void setCustomCopyright(String copyright) {
+    	customCopyright = copyright;
+	}
+
+	public String getCustomCopyright() {
+    	return customCopyright;
+	}
+
+	public void setMuteOnStart(Boolean mute) {
+    	muteOnStart = mute;
+	}
+
+	public Boolean getMuteOnStart() {
+    	return muteOnStart;
+	}
+
+	public void setAllowModsToUnmuteUsers(Boolean value) {
+		allowModsToUnmuteUsers = value;
+	}
+
+	public Boolean getAllowModsToUnmuteUsers() {
+		return allowModsToUnmuteUsers;
+	}
+
+	public void userJoined(User user) {
+		User u = getUserById(user.getInternalUserId());
+		if (u != null) {
+			u.joined();
+		} else {
+			if (!userHasJoined) userHasJoined = true;
+			this.users.put(user.getInternalUserId(), user);
+			// Clean this user up from the entered user's list
+			removeEnteredUser(user.getInternalUserId());
+		}
+	}
+
+	public User userLeft(String userId) {
+		User user = getUserById(userId);
+		if (user != null) {
+			user.left();
+		}
+
+		return user;
+	}
+
+	public User removeUser(String userId) {
+		return this.users.remove(userId);
 	}
 
 	public User getUserById(String id){
 		return this.users.get(id);
 	}
-	
+
+    public User getUserWithExternalId(String externalUserId) {
+        for (Map.Entry<String, User> entry : users.entrySet()) {
+            User u = entry.getValue();
+            if (u.getExternalUserId().equals(externalUserId)) {
+                return u;
+            }
+        }
+        return null;
+    }
+
+	    
 	public int getNumUsers(){
 		return this.users.size();
 	}
 	
-	public int getNumModerators(){
-		int sum = 0;
-		for (String key : users.keySet()) {
-		    User u =  (User) users.get(key);
-		    if (u.isModerator()) sum++;
-		}
-		return sum;
-	}
+    public int getNumModerators() {
+        int sum = 0;
+        for (Map.Entry<String, User> entry : users.entrySet()) {
+            User u = entry.getValue();
+            if (u.isModerator())
+                sum++;
+        }
+        return sum;
+    }
 	
 	public String getDialNumber() {
 		return dialNumber;
 	}
 
-	public int getNumListenOnly() {
-		int sum = 0;
-		for (String key : users.keySet()) {
-			User u =  (User) users.get(key);
-			if (u.isListeningOnly()) sum++;
-		}
-		return sum;
-	}
+    public int getNumListenOnly() {
+        int sum = 0;
+        for (Map.Entry<String, User> entry : users.entrySet()) {
+            User u = entry.getValue();
+            if (u.isListeningOnly())
+                sum++;
+        }
+        return sum;
+    }
 	
-	public int getNumVoiceJoined() {
-		int sum = 0;
-		for (String key : users.keySet()) {
-			User u =  (User) users.get(key);
-			if (u.isVoiceJoined()) sum++;
-		}
-		return sum;
-	}
+    public int getNumVoiceJoined() {
+        int sum = 0;
+        for (Map.Entry<String, User> entry : users.entrySet()) {
+            User u = entry.getValue();
+            if (u.isVoiceJoined())
+                sum++;
+        }
+        return sum;
+    }
 
-	public int getNumVideos() {
-		int sum = 0;
-		for (String key : users.keySet()) {
-			User u =  (User) users.get(key);
-			sum += u.getStreams().size();
-		}
-		return sum;
-	}
+    public int getNumVideos() {
+        int sum = 0;
+        for (Map.Entry<String, User> entry : users.entrySet()) {
+            User u = entry.getValue();
+            sum += u.getStreams().size();
+        }
+        return sum;
+    }
 	
 	public void addUserCustomData(String userID, Map<String, String> data) {
 		userCustomData.put(userID, data);
@@ -473,13 +573,79 @@ public class Meeting {
 	public Integer getMeetingExpireIfNoUserJoinedInMinutes() {
 		return meetingExpireIfNoUserJoinedInMinutes;
 	}
+	
+   public Integer getUserInactivityInspectTimerInMinutes() {
+        return userInactivityInspectTimerInMinutes;
+    }
 
+    public void setUserInactivityInspectTimerInMinutes(Integer userInactivityInjspectTimerInMinutes) {
+        this.userInactivityInspectTimerInMinutes = userInactivityInjspectTimerInMinutes;
+    }
+    
+    public Integer getUserInactivityThresholdInMinutes() {
+        return userInactivityThresholdInMinutes;
+    }
+
+    public void setUserInactivityThresholdInMinutes(Integer userInactivityThresholdInMinutes) {
+        this.userInactivityThresholdInMinutes = userInactivityThresholdInMinutes;
+    }
+
+    public Integer getUserActivitySignResponseDelayInMinutes() {
+        return userActivitySignResponseDelayInMinutes;
+    }
+
+    public void setUserActivitySignResponseDelayInMinutes(Integer userActivitySignResponseDelayInMinutes) {
+        this.userActivitySignResponseDelayInMinutes = userActivitySignResponseDelayInMinutes;
+    }
+
+    public String getMeetingEndedCallbackURL() {
+    	return meetingEndedCallbackURL;
+    }
+
+    public void setMeetingEndedCallbackURL(String meetingEndedCallbackURL) {
+    	this.meetingEndedCallbackURL = meetingEndedCallbackURL;
+    }
 
 	public Map<String, Object> getUserCustomData(String userID){
 		return (Map<String, Object>) userCustomData.get(userID);
 	}
 
-	/***
+	public void userRegistered(RegisteredUser user) {
+        this.registeredUsers.put(user.userId, user);
+    }
+
+    public RegisteredUser userUnregistered(String userid) {
+		return this.registeredUsers.remove(userid);
+    }
+
+    public ConcurrentMap<String, RegisteredUser> getRegisteredUsers() {
+        return registeredUsers;
+    }
+
+    public ConcurrentMap<String, Long> getEnteredUsers() {
+        return this.enteredUsers;
+    }
+
+    public void userEntered(String userId) {
+        // Skip if user already joined
+        User u = getUserById(userId);
+        if (u != null) return;
+
+        if (!enteredUsers.containsKey(userId)) {
+            Long time = System.currentTimeMillis();
+            this.enteredUsers.put(userId, time);
+        }
+    }
+
+    public Long removeEnteredUser(String userId) {
+        return this.enteredUsers.remove(userId);
+    }
+
+    public Long getEnteredUserById(String userId) {
+        return this.enteredUsers.get(userId);
+    }
+
+    /***
 	 * Meeting Builder
 	 *
 	 */
@@ -509,6 +675,10 @@ public class Meeting {
     	private long createdTime;
     	private boolean isBreakout;
     	private String guestPolicy;
+    	private BreakoutRoomsParams breakoutRoomsParams;
+    	private LockSettingsParams lockSettingsParams;
+		private Boolean allowDuplicateExtUserid;
+		private Boolean endWhenNoModerator;
 
     	public Builder(String externalId, String internalId, long createTime) {
     		this.externalId = externalId;
@@ -545,7 +715,7 @@ public class Meeting {
     		this.allowStartStopRecording = allow;
     		return this;
     	}
-    	
+    
         public Builder withWebcamsOnlyForModerator(boolean only) {
             this.webcamsOnlyForModerator = only;
             return this;
@@ -625,22 +795,29 @@ public class Meeting {
     		guestPolicy = policy;
     		return  this;
 		}
+
+		public Builder withBreakoutRoomsParams(BreakoutRoomsParams params) {
+    		breakoutRoomsParams = params;
+    		return this;
+		}
+
+		public Builder withLockSettingsParams(LockSettingsParams params) {
+    		lockSettingsParams = params;
+    		return  this;
+		}
+
+		public Builder withAllowDuplicateExtUserid(Boolean allowDuplicateExtUserid) {
+    		this.allowDuplicateExtUserid = allowDuplicateExtUserid;
+    		return this;
+		}
+
+		public Builder withEndWhenNoModerator(Boolean endWhenNoModerator) {
+    		this.endWhenNoModerator = endWhenNoModerator;
+    		return this;
+		}
     
     	public Meeting build() {
     		return new Meeting(this);
     	}
-    }
-
-    public void userRegistered(RegisteredUser user) {
-        this.registeredUsers.put(user.userId, user);
-    }
-
-    public RegisteredUser userUnregistered(String userid) {
-		RegisteredUser r = (RegisteredUser) this.registeredUsers.remove(userid);
-        return r;
-    }
-
-    public ConcurrentMap<String, RegisteredUser> getRegisteredUsers() {
-        return registeredUsers;
     }
 }

@@ -23,12 +23,19 @@ trait CreateGroupChatReqMsgHdlr extends SystemConfiguration {
     for {
       user <- Users2x.findWithIntId(liveMeeting.users2x, msg.header.userId)
     } yield {
-      if (user.role != Roles.MODERATOR_ROLE && user.locked) {
-        val permissions = MeetingStatus2x.getPermissions(liveMeeting.status)
+      if (user.role != Roles.MODERATOR_ROLE) {
         if (msg.body.access == GroupChatAccess.PRIVATE) {
-          chatLocked = permissions.disablePrivChat
+          val permissions = MeetingStatus2x.getPermissions(liveMeeting.status)
+          val modMembers = msg.body.users.filter(userId => Users2x.findWithIntId(liveMeeting.users2x, userId) match {
+            case Some(user) => user.role == Roles.MODERATOR_ROLE
+            case None       => false
+          })
+          // don't lock creation of private chats that involve a moderator
+          if (modMembers.length == 0) {
+            chatLocked = user.locked && permissions.disablePrivChat
+          }
         } else {
-          chatLocked = permissions.disablePubChat
+          chatLocked = true
         }
       }
     }
@@ -48,7 +55,7 @@ trait CreateGroupChatReqMsgHdlr extends SystemConfiguration {
         val msgs = msg.body.msg.map(m => GroupChatApp.toGroupChatMessage(createdBy, m))
         val users = {
           if (msg.body.access == GroupChatAccess.PRIVATE) {
-            val cu = msg.body.users.toSet + msg.body.requesterId
+            val cu = msg.body.users.toSet + msg.header.userId
             cu.flatMap(u => GroupChatApp.findGroupChatUser(u, liveMeeting.users2x)).toVector
           } else {
             Vector.empty
@@ -105,7 +112,7 @@ trait CreateGroupChatReqMsgHdlr extends SystemConfiguration {
 
     } else {
       val meetingId = liveMeeting.props.meetingProp.intId
-      val userId = msg.body.requesterId
+      val userId = msg.header.userId
       val envelope = makeEnvelope(MessageTypes.BROADCAST_TO_MEETING, GroupChatCreatedEvtMsg.NAME,
         meetingId, userId)
       val header = makeHeader(GroupChatCreatedEvtMsg.NAME, meetingId, userId)

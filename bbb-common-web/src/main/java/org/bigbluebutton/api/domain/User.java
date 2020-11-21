@@ -36,12 +36,18 @@ public class User {
 	private String  guestStatus;
 	private Boolean listeningOnly = false;
 	private Boolean voiceJoined = false;
+	private String clientType;
 	private List<String> streams;
-	
+	private Long leftOn = null;
+
 	public User(String internalUserId,
-				String externalUserId, String fullname,
-				String role, String avatarURL,
-				Boolean guest, String  guestStatus) {
+							String externalUserId,
+							String fullname,
+							String role,
+							String avatarURL,
+							Boolean guest,
+							String  guestStatus,
+							String clientType) {
 		this.internalUserId = internalUserId;
 		this.externalUserId = externalUserId;
 		this.fullname = fullname;
@@ -49,8 +55,9 @@ public class User {
 		this.avatarURL = avatarURL;
 		this.guest = guest;
 		this.guestStatus = guestStatus;
-		this.status = new ConcurrentHashMap<String, String>();
+		this.status = new ConcurrentHashMap<>();
 		this.streams = Collections.synchronizedList(new ArrayList<String>());
+		this.clientType = clientType;
 	}
 
 	public String getInternalUserId() {
@@ -84,6 +91,22 @@ public class User {
 		return this.guestStatus;
 	}
 	
+	public Boolean hasLeft() {
+		return leftOn != null;
+	}
+
+	public void joined() {
+		this.leftOn = null;
+	}
+
+	public void left() {
+		this.leftOn = System.currentTimeMillis();
+	}
+
+	public Long getLeftOn() {
+		return this.leftOn;
+	}
+
 	public String getFullname() {
 		return fullname;
 	}
@@ -106,7 +129,7 @@ public class User {
 	}
 
 	public boolean isModerator() {
-		return this.role.equalsIgnoreCase("MODERATOR");
+		return "MODERATOR".equalsIgnoreCase(this.role);
 	}
 	
 	public void setStatus(String key, String value){
@@ -122,7 +145,7 @@ public class User {
 	public boolean isPresenter() {
 		String isPresenter = this.status.get("presenter");
 		if (isPresenter != null) {
-			return isPresenter.equalsIgnoreCase("true");
+			return "true".equalsIgnoreCase(isPresenter);
 		}
 		return false;
 	}
@@ -139,9 +162,9 @@ public class User {
 		return streams;
 	}
 
-        public Boolean hasVideo() {
-                return this.getStreams().size() > 0;
-        }
+    public Boolean hasVideo() {
+        return !this.getStreams().isEmpty();
+    }
 
 	public Boolean isListeningOnly() {
 		return listeningOnly;
@@ -158,4 +181,9 @@ public class User {
 	public void setVoiceJoined(Boolean voiceJoined) {
 		this.voiceJoined = voiceJoined;
 	}
+
+	public String getClientType() {
+		return this.clientType;
+	}
+
 }

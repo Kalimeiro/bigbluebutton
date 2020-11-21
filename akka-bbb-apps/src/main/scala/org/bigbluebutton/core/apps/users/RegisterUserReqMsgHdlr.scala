@@ -22,10 +22,7 @@ trait RegisterUserReqMsgHdlr {
       BbbCommonEnvCoreMsg(envelope, event)
     }
 
-    val guestPolicy = liveMeeting.guestsWaiting.getGuestPolicy().policy
     val guestStatus = msg.body.guestStatus
-
-    println("****** GUEST POLICY = " + guestPolicy + " guestStatus = " + guestStatus)
 
     val regUser = RegisteredUsers.create(msg.body.intUserId, msg.body.extUserId,
       msg.body.name, msg.body.role, msg.body.authToken,
@@ -40,11 +37,14 @@ trait RegisterUserReqMsgHdlr {
     outGW.send(event)
 
     def notifyModeratorsOfGuestWaiting(guests: Vector[GuestWaiting], users: Users2x, meetingId: String): Unit = {
-      val mods = Users2x.findAll(users).filter(p => p.role == Roles.MODERATOR_ROLE)
+      val mods = Users2x.findAll(users).filter(p => p.role == Roles.MODERATOR_ROLE && p.clientType == ClientType.FLASH)
       mods foreach { m =>
         val event = MsgBuilder.buildGuestsWaitingForApprovalEvtMsg(meetingId, m.intId, guests)
         outGW.send(event)
       }
+      // Meteor should only listen for this single message
+      val event = MsgBuilder.buildGuestsWaitingForApprovalEvtMsg(meetingId, "nodeJSapp", guests)
+      outGW.send(event)
     }
 
     def addGuestToWaitingForApproval(guest: GuestWaiting, guestsWaitingList: GuestsWaiting): Unit = {
@@ -54,14 +54,14 @@ trait RegisterUserReqMsgHdlr {
     guestStatus match {
       case GuestStatus.ALLOW =>
         val g = GuestApprovedVO(regUser.id, GuestStatus.ALLOW)
-        UsersApp.approveOrRejectGuest(liveMeeting, outGW, g, "SYSTEM")
+        UsersApp.approveOrRejectGuest(liveMeeting, outGW, g, SystemUser.ID)
       case GuestStatus.WAIT =>
-        val guest = GuestWaiting(regUser.id, regUser.name, regUser.role)
+        val guest = GuestWaiting(regUser.id, regUser.name, regUser.role, regUser.guest, regUser.authed)
         addGuestToWaitingForApproval(guest, liveMeeting.guestsWaiting)
         notifyModeratorsOfGuestWaiting(Vector(guest), liveMeeting.users2x, liveMeeting.props.meetingProp.intId)
       case GuestStatus.DENY =>
         val g = GuestApprovedVO(regUser.id, GuestStatus.DENY)
-        UsersApp.approveOrRejectGuest(liveMeeting, outGW, g, "SYSTEM")
+        UsersApp.approveOrRejectGuest(liveMeeting, outGW, g, SystemUser.ID)
     }
 
   }

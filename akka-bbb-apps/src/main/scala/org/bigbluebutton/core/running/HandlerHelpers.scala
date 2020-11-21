@@ -4,11 +4,13 @@ import org.bigbluebutton.SystemConfiguration
 import org.bigbluebutton.common2.msgs._
 import org.bigbluebutton.core.api.{ BreakoutRoomEndedInternalMsg, DestroyMeetingInternalMsg, EndBreakoutRoomInternalMsg }
 import org.bigbluebutton.core.apps.users.UsersApp
+import org.bigbluebutton.core.apps.voice.VoiceApp
 import org.bigbluebutton.core.bus.{ BigBlueButtonEvent, InternalEventBus }
 import org.bigbluebutton.core.domain.MeetingState2x
 import org.bigbluebutton.core.models._
 import org.bigbluebutton.core2.MeetingStatus2x
 import org.bigbluebutton.core2.message.senders.{ MsgBuilder, UserJoinedMeetingEvtMsgBuilder }
+import org.bigbluebutton.core.util.TimeUtil
 
 trait HandlerHelpers extends SystemConfiguration {
 
@@ -25,11 +27,30 @@ trait HandlerHelpers extends SystemConfiguration {
     outGW.send(event)
   }
 
-  def userJoinMeeting(outGW: OutMsgRouter, authToken: String,
+  def trackUserJoin(
+      outGW:       OutMsgRouter,
+      liveMeeting: LiveMeeting,
+      regUser:     RegisteredUser
+  ): Unit = {
+    if (!regUser.joined) {
+      RegisteredUsers.updateUserJoin(liveMeeting.registeredUsers, regUser)
+    }
+  }
+
+  def userJoinMeeting(outGW: OutMsgRouter, authToken: String, clientType: String,
                       liveMeeting: LiveMeeting, state: MeetingState2x): MeetingState2x = {
+
     val nu = for {
       regUser <- RegisteredUsers.findWithToken(authToken, liveMeeting.registeredUsers)
     } yield {
+      trackUserJoin(outGW, liveMeeting, regUser)
+
+      // Flag that an authed user had joined the meeting in case
+      // we need to end meeting when all authed users have left.
+      if (regUser.authed) {
+        MeetingStatus2x.authUserHadJoined(liveMeeting.status)
+      }
+
       UserState(
         intId = regUser.id,
         extId = regUser.externId,
@@ -41,36 +62,46 @@ trait HandlerHelpers extends SystemConfiguration {
         emoji = "none",
         presenter = false,
         locked = MeetingStatus2x.getPermissions(liveMeeting.status).lockOnJoin,
-        avatar = regUser.avatarURL
+        avatar = regUser.avatarURL,
+        clientType = clientType,
+        userLeftFlag = UserLeftFlag(false, 0)
       )
     }
 
     nu match {
       case Some(newUser) =>
-        Users2x.add(liveMeeting.users2x, newUser)
+        Users2x.findWithIntId(liveMeeting.users2x, newUser.intId) match {
+          case Some(reconnectingUser) =>
+            if (reconnectingUser.userLeftFlag.left) {
+              // User has reconnected. Just reset it's flag. ralam Oct 23, 2018
+              Users2x.resetUserLeftFlag(liveMeeting.users2x, newUser.intId)
+            }
+            state
+          case None =>
+            Users2x.add(liveMeeting.users2x, newUser)
 
-        val event = UserJoinedMeetingEvtMsgBuilder.build(liveMeeting.props.meetingProp.intId, newUser)
-        outGW.send(event)
-        startRecordingIfAutoStart2x(outGW, liveMeeting)
-        if (!Users2x.hasPresenter(liveMeeting.users2x)) {
-          UsersApp.automaticallyAssignPresenter(outGW, liveMeeting)
+            val event = UserJoinedMeetingEvtMsgBuilder.build(liveMeeting.props.meetingProp.intId, newUser)
+            outGW.send(event)
+            val newState = startRecordingIfAutoStart2x(outGW, liveMeeting, state)
+            if (!Users2x.hasPresenter(liveMeeting.users2x)) {
+              UsersApp.automaticallyAssignPresenter(outGW, liveMeeting)
+            }
+            newState.update(newState.expiryTracker.setUserHasJoined())
         }
 
-        if (newUser.role == Roles.MODERATOR_ROLE) {
-          UsersApp.addUserToPresenterGroup(liveMeeting, outGW, newUser.intId, newUser.intId)
-        }
-
-        state.update(state.expiryTracker.setUserHasJoined())
       case None =>
         state
     }
   }
 
-  def startRecordingIfAutoStart2x(outGW: OutMsgRouter, liveMeeting: LiveMeeting): Unit = {
+  def startRecordingIfAutoStart2x(outGW: OutMsgRouter, liveMeeting: LiveMeeting, state: MeetingState2x): MeetingState2x = {
+    var newState = state
     if (liveMeeting.props.recordProp.record && !MeetingStatus2x.isRecording(liveMeeting.status) &&
       liveMeeting.props.recordProp.autoStartRecording && Users2x.numUsers(liveMeeting.users2x) == 1) {
 
       MeetingStatus2x.recordingStarted(liveMeeting.status)
+
+      val tracker = state.recordingTracker.startTimer(TimeUtil.timeNowInMs())
 
       def buildRecordingStatusChangedEvtMsg(meetingId: String, userId: String, recording: Boolean): BbbCommonEnvCoreMsg = {
         val routing = Routing.addMsgToClientRouting(MessageTypes.BROADCAST_TO_MEETING, meetingId, userId)
@@ -87,8 +118,38 @@ trait HandlerHelpers extends SystemConfiguration {
         "system", MeetingStatus2x.isRecording(liveMeeting.status)
       )
       outGW.send(event)
-
+      newState = state.update(tracker)
     }
+    newState
+  }
+
+  def stopRecordingIfAutoStart2x(outGW: OutMsgRouter, liveMeeting: LiveMeeting, state: MeetingState2x): MeetingState2x = {
+    var newState = state
+    if (liveMeeting.props.recordProp.record && MeetingStatus2x.isRecording(liveMeeting.status) &&
+      liveMeeting.props.recordProp.autoStartRecording && Users2x.numUsers(liveMeeting.users2x) == 0) {
+
+      MeetingStatus2x.recordingStopped(liveMeeting.status)
+
+      val tracker = state.recordingTracker.pauseTimer(TimeUtil.timeNowInMs())
+
+      def buildRecordingStatusChangedEvtMsg(meetingId: String, userId: String, recording: Boolean): BbbCommonEnvCoreMsg = {
+        val routing = Routing.addMsgToClientRouting(MessageTypes.BROADCAST_TO_MEETING, meetingId, userId)
+        val envelope = BbbCoreEnvelope(RecordingStatusChangedEvtMsg.NAME, routing)
+        val body = RecordingStatusChangedEvtMsgBody(recording, userId)
+        val header = BbbClientMsgHeader(RecordingStatusChangedEvtMsg.NAME, meetingId, userId)
+        val event = RecordingStatusChangedEvtMsg(header, body)
+
+        BbbCommonEnvCoreMsg(envelope, event)
+      }
+
+      val event = buildRecordingStatusChangedEvtMsg(
+        liveMeeting.props.meetingProp.intId,
+        "system", MeetingStatus2x.isRecording(liveMeeting.status)
+      )
+      outGW.send(event)
+      newState = state.update(tracker)
+    }
+    newState
   }
 
   def endMeeting(outGW: OutMsgRouter, liveMeeting: LiveMeeting, reason: String): Unit = {
@@ -137,6 +198,9 @@ trait HandlerHelpers extends SystemConfiguration {
   }
 
   def ejectAllUsersFromVoiceConf(outGW: OutMsgRouter, liveMeeting: LiveMeeting): Unit = {
+    // Force stopping of voice recording if voice conf is being recorded.
+    VoiceApp.stopRecordingVoiceConference(liveMeeting, outGW)
+
     val event = MsgBuilder.buildEjectAllFromVoiceConfMsg(liveMeeting.props.meetingProp.intId, liveMeeting.props.voiceProp.voiceConf)
     outGW.send(event)
   }
@@ -175,6 +239,9 @@ trait HandlerHelpers extends SystemConfiguration {
         new BreakoutRoomEndedInternalMsg(meetingId)
       ))
     }
+
+    // Force stopping of voice recording if voice conf is being recorded.
+    VoiceApp.stopRecordingVoiceConference(liveMeeting, outGW)
 
     val event = MsgBuilder.buildEjectAllFromVoiceConfMsg(meetingId, liveMeeting.props.voiceProp.voiceConf)
     outGW.send(event)

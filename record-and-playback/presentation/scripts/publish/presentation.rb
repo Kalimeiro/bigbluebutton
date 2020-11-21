@@ -130,6 +130,12 @@ def svg_render_shape_pencil(g, slide, shape)
   g['shape'] = "pencil#{shape[:shape_unique_id]}"
 
   doc = g.document
+
+  if shape[:data_points].length < 2
+    BigBlueButton.logger.warn("Pencil #{shape[:shape_unique_id]} doesn't have enough points")
+    return
+  end
+
   if shape[:data_points].length == 2
     BigBlueButton.logger.info("Pencil #{shape[:shape_unique_id]}: Drawing single point")
     g['style'] = "stroke:none;fill:##{shape[:color]};visibility:hidden"
@@ -362,7 +368,7 @@ def svg_render_shape_poll(g, slide, shape)
 
   result = JSON.load(shape[:result])
   num_responders = shape[:num_responders]
-  presentation = shape[:presentation]
+  presentation = slide[:presentation]
   max_num_votes = result.map{ |r| r['num_votes'] }.max
 
   dat_file = "#{$process_dir}/poll_result#{poll_id}.dat"
@@ -392,7 +398,7 @@ def svg_render_shape_poll(g, slide, shape)
     g.puts('set yrange [0:*]')
     g.puts('unset border')
     g.puts('unset ytics')
-    xtics = result.map{ |r| "#{r['key'].gsub('%', '%%').inspect} #{r['id']}" }.join(', ')
+    xtics = result.map{ |r| "#{r['key'].gsub(/[`<|@{}^_]/, '').gsub('%', '%%').inspect} #{r['id']}" }.join(', ')
     g.puts("set xtics rotate by 90 scale 0 right (#{xtics})")
     if num_responders > 0
       x2tics = result.map{ |r| "\"#{(r['num_votes'].to_f / num_responders * 100).to_i}%%\" #{r['id']}" }.join(', ')
@@ -643,11 +649,15 @@ def events_parse_shape(shapes, event, current_presentation, current_slide, times
       shape[:type] == 'ellipse' or shape[:type] == 'triangle' or
       shape[:type] == 'line'
     shape[:color] = color_to_hex(event.at_xpath('color').text)
-    thickness = event.at_xpath('thickness').text
+    thickness = event.at_xpath('thickness')
+    unless thickness
+      BigBlueButton.logger.warn("Draw #{shape[:shape_id]} Shape #{shape[:shape_unique_id]} ID #{shape[:id]} is missing thickness")
+      return
+    end
     if $version_atleast_2_0_0
-      shape[:thickness_percent] = thickness.to_f
+      shape[:thickness_percent] = thickness.text.to_f
     else
-      shape[:thickness] = thickness.to_i
+      shape[:thickness] = thickness.text.to_i
     end
   end
   if shape[:type] == 'rectangle'
@@ -676,7 +686,15 @@ def events_parse_shape(shapes, event, current_presentation, current_slide, times
   if shape[:type] == 'text'
     shape[:text_box_width] = event.at_xpath('textBoxWidth').text.to_f
     shape[:text_box_height] = event.at_xpath('textBoxHeight').text.to_f
-    shape[:calced_font_size] = event.at_xpath('calcedFontSize').text.to_f
+
+    calced_font_size = event.at_xpath('calcedFontSize')
+    unless calced_font_size
+      BigBlueButton.logger.warn("Draw #{shape[:shape_id]} Shape #{shape[:shape_unique_id]} ID #{shape[:id]} is missing calcedFontSize")
+      return
+    end
+
+    shape[:calced_font_size] = calced_font_size.text.to_f
+
     shape[:font_color] = color_to_hex(event.at_xpath('fontColor').text)
     text = event.at_xpath('text')
     if !text.nil?
@@ -843,17 +861,20 @@ def events_get_image_info(slide)
     slide[:text] = "presentation/#{slide[:presentation]}/textfiles/slide-#{slide[:slide] + 1}.txt"
   end
   image_path = "#{$process_dir}/#{slide[:src]}"
-  if !File.exist?(image_path)
+
+  unless File.exist?(image_path)
     BigBlueButton.logger.warn("Missing image file #{image_path}!")
     # Emergency last-ditch blank image creation
     FileUtils.mkdir_p(File.dirname(image_path))
-    if slide[:deskshare]
-      command = "convert -size #{$presentation_props['deskshare_output_width']}x#{$presentation_props['deskshare_output_height']} xc:transparent -background transparent #{image_path}"
-    else
-      command = "convert -size 1600x1200 xc:transparent -background transparent -quality 90 +dither -depth 8 -colors 256 #{image_path}"
-    end
-    BigBlueButton.execute(command)
+    command = \
+      if slide[:deskshare]
+        ['convert', '-size', "#{$presentation_props['deskshare_output_width']}x#{$presentation_props['deskshare_output_height']}", 'xc:transparent', '-background', 'transparent', image_path]
+      else
+        ['convert', '-size', '1600x1200', 'xc:transparent', '-background', 'transparent', '-quality', '90', '+dither', '-depth', '8', '-colors', '256', image_path]
+      end
+    BigBlueButton.exec_ret(*command) || raise("Unable to generate blank image for #{image_path}")
   end
+
   slide[:width], slide[:height] = FastImage.size(image_path)
   BigBlueButton.logger.info("Image size is #{slide[:width]}x#{slide[:height]}")
 end
@@ -936,11 +957,11 @@ def processPresentation(package_dir)
       current_height_ratio = event.at_xpath('heightRatio').text.to_f
       panzoom_changed = true
 
-    elsif eventname == 'DeskshareStartedEvent' and $presentation_props['include_deskshare']
+    elsif  $presentation_props['include_deskshare'] and (eventname == 'DeskshareStartedEvent' or eventname == 'StartWebRTCDesktopShareEvent')
       deskshare = true
       slide_changed = true
 
-    elsif eventname == 'DeskshareStoppedEvent' and $presentation_props['include_deskshare']
+    elsif $presentation_props['include_deskshare'] and (eventname == 'DeskshareStoppedEvent' or eventname == 'StopWebRTCDesktopShareEvent')
       deskshare = false
       slide_changed = true
 
@@ -1196,13 +1217,18 @@ begin
 
       begin
 
-        if File.exist?("#{$process_dir}/webcams.webm")
+        video_formats = $presentation_props['video_formats']
+
+        video_files = Dir.glob("#{$process_dir}/webcams.{#{video_formats.join(',')}}")
+        if ! video_files.empty?
           BigBlueButton.logger.info("Making video dir")
           video_dir = "#{package_dir}/video"
           FileUtils.mkdir_p video_dir
-          BigBlueButton.logger.info("Made video dir - copying: #{$process_dir}/webcams.webm to -> #{video_dir}")
-          FileUtils.cp("#{$process_dir}/webcams.webm", video_dir)
-          BigBlueButton.logger.info("Copied .webm file")
+          video_files.each do |video_file|
+            BigBlueButton.logger.info("Made video dir - copying: #{video_file} to -> #{video_dir}")
+            FileUtils.cp(video_file, video_dir)
+            BigBlueButton.logger.info("Copied #{File.extname(video_file)} file")
+          end
         else
           audio_dir = "#{package_dir}/audio"
           BigBlueButton.logger.info("Making audio dir")
@@ -1223,13 +1249,16 @@ begin
           end
         end
 
-        if File.exist?("#{$process_dir}/deskshare.webm")
+        video_files = Dir.glob("#{$process_dir}/deskshare.{#{video_formats.join(',')}}")
+        if ! video_files.empty?
           BigBlueButton.logger.info("Making deskshare dir")
           deskshare_dir = "#{package_dir}/deskshare"
           FileUtils.mkdir_p deskshare_dir
-          BigBlueButton.logger.info("Made deskshare dir - copying: #{$process_dir}/deskshare.webm to -> #{deskshare_dir}")
-          FileUtils.cp("#{$process_dir}/deskshare.webm", deskshare_dir)
-          BigBlueButton.logger.info("Copied deskshare.webm file")
+          video_files.each do |video_file|
+            BigBlueButton.logger.info("Made deskshare dir - copying: #{video_file} to -> #{deskshare_dir}")
+            FileUtils.cp(video_file, deskshare_dir)
+            BigBlueButton.logger.info("Copied #{File.extname(video_file)} file")
+          end
         else
           BigBlueButton.logger.info("Could not copy deskshares.webm: file doesn't exist")
         end
@@ -1329,7 +1358,7 @@ begin
 
         processPresentation(package_dir)
 
-        processDeskshareEvents()
+        processDeskshareEvents(@doc)
 
         # Write slides.xml to file
         File.open("#{package_dir}/slides_new.xml", 'w') { |f| f.puts $slides_doc.to_xml }

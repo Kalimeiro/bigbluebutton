@@ -1,15 +1,38 @@
 import React from 'react';
-import { createContainer } from 'meteor/react-meteor-data';
+import PropTypes from 'prop-types';
+import { withTracker } from 'meteor/react-meteor-data';
+import Users from '/imports/api/users';
+import Auth from '/imports/ui/services/auth';
 import PollingService from './service';
+import PollService from '/imports/ui/components/poll/service';
 import PollingComponent from './component';
 
-const PollingContainer = ({
-  pollExists, poll, handleVote, ...props
-}) => {
-  if (!pollExists) return null;
-  return <PollingComponent poll={poll} handleVote={handleVote} {...props} />;
+const propTypes = {
+  pollExists: PropTypes.bool.isRequired,
 };
-export default createContainer(() => {
-  const data = PollingService.mapPolls();
-  return data;
-}, PollingContainer);
+
+const POLLING_ENABLED = Meteor.settings.public.poll.enabled;
+
+const PollingContainer = ({ pollExists, ...props }) => {
+  const currentUser = Users.findOne({ userId: Auth.userID }, { fields: { presenter: 1 } });
+  const showPolling = pollExists && !currentUser.presenter && POLLING_ENABLED;
+  if (showPolling) {
+    return (
+      <PollingComponent {...props} />
+    );
+  }
+  return null;
+};
+
+PollingContainer.propTypes = propTypes;
+
+export default withTracker(() => {
+  const { pollExists, handleVote, poll } = PollingService.mapPolls();
+  return ({
+    pollExists,
+    handleVote,
+    poll,
+    pollAnswerIds: PollService.pollAnswerIds,
+    isMeteorConnected: Meteor.status().connected,
+  });
+})(PollingContainer);

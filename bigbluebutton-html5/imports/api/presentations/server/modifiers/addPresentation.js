@@ -1,22 +1,34 @@
+import { HTTP } from 'meteor/http';
 import { check } from 'meteor/check';
 import Presentations from '/imports/api/presentations';
 import Logger from '/imports/startup/server/logger';
 import flat from 'flat';
-
 import addSlide from '/imports/api/slides/server/modifiers/addSlide';
 import setCurrentPresentation from './setCurrentPresentation';
 
-const addSlides = (meetingId, presentationId, slides) => {
-  const slidesAdded = [];
-
-  slides.forEach((slide) => {
-    slidesAdded.push(addSlide(meetingId, presentationId, slide));
-  });
-
-  return slidesAdded;
+const getSlideText = async (url) => {
+  let content = '';
+  try {
+    content = await HTTP.get(url).content;
+  } catch (error) {
+    Logger.error(`No file found. ${error}`);
+  }
+  return content;
 };
 
-export default function addPresentation(meetingId, presentation) {
+const addSlides = (meetingId, podId, presentationId, slides) => {
+  slides.forEach(async (slide) => {
+    const content = await getSlideText(slide.txtUri);
+
+    Object.assign(slide, { content });
+
+    addSlide(meetingId, podId, presentationId, slide);
+  });
+};
+
+export default function addPresentation(meetingId, podId, presentation) {
+  check(meetingId, String);
+  check(podId, String);
   check(presentation, {
     id: String,
     name: String,
@@ -41,12 +53,14 @@ export default function addPresentation(meetingId, presentation) {
 
   const selector = {
     meetingId,
+    podId,
     id: presentation.id,
   };
 
   const modifier = {
     $set: Object.assign({
       meetingId,
+      podId,
       'conversion.done': true,
       'conversion.error': false,
     }, flat(presentation, { safe: true })),
@@ -57,12 +71,12 @@ export default function addPresentation(meetingId, presentation) {
       return Logger.error(`Adding presentation to collection: ${err}`);
     }
 
-    addSlides(meetingId, presentation.id, presentation.pages);
+    addSlides(meetingId, podId, presentation.id, presentation.pages);
 
     const { insertedId } = numChanged;
     if (insertedId) {
       if (presentation.current) {
-        setCurrentPresentation(meetingId, presentation.id);
+        setCurrentPresentation(meetingId, podId, presentation.id);
       }
 
       return Logger.info(`Added presentation id=${presentation.id} meeting=${meetingId}`);

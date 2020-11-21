@@ -6,11 +6,10 @@ import { withModalMounter } from '/imports/ui/components/modal/service';
 import DeviceSelector from '/imports/ui/components/audio/device-selector/component';
 import AudioTestContainer from '/imports/ui/components/audio/audio-test/container';
 import cx from 'classnames';
-import styles from './styles';
+import { styles } from './styles';
 
 const propTypes = {
   intl: intlShape.isRequired,
-  exitAudio: PropTypes.func.isRequired,
   changeInputDevice: PropTypes.func.isRequired,
   changeOutputDevice: PropTypes.func.isRequired,
   handleBack: PropTypes.func.isRequired,
@@ -96,7 +95,7 @@ class AudioSettings extends React.Component {
     } = this.props;
 
     return (
-      <div>
+      <div className={styles.formWrapper}>
         <div className={styles.form}>
           <div className={styles.row}>
             <div className={styles.audioNote}>
@@ -159,15 +158,15 @@ class AudioSettings extends React.Component {
           <Button
             className={styles.backBtn}
             label={intl.formatMessage(intlMessages.backLabel)}
-            size={'md'}
-            color={'primary'}
+            size="md"
+            color="primary"
             onClick={handleBack}
             disabled={isConnecting}
             ghost
           />
           <Button
-            size={'md'}
-            color={'primary'}
+            size="md"
+            color="primary"
             label={intl.formatMessage(intlMessages.retryLabel)}
             onClick={handleRetry}
           />
@@ -175,7 +174,6 @@ class AudioSettings extends React.Component {
       </div>
     );
   }
-
 }
 
 AudioSettings.propTypes = propTypes;

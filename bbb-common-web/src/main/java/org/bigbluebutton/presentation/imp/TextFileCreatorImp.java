@@ -27,29 +27,29 @@ import java.io.Writer;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.google.gson.Gson;
 import org.bigbluebutton.presentation.SupportedFileTypes;
 import org.bigbluebutton.presentation.TextFileCreator;
 import org.bigbluebutton.presentation.UploadedPresentation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.Gson;
+
 public class TextFileCreatorImp implements TextFileCreator {
   private static Logger log = LoggerFactory.getLogger(TextFileCreatorImp.class);
 
   @Override
-  public boolean createTextFiles(UploadedPresentation pres) {
+  public boolean createTextFile(UploadedPresentation pres, int page) {
     boolean success = false;
     File textfilesDir = determineTextfilesDirectory(pres.getUploadedFile());
     if (!textfilesDir.exists())
       textfilesDir.mkdir();
 
-    cleanDirectory(textfilesDir);
 
     try {
-      success = generateTextFiles(textfilesDir, pres);
+      success = generateTextFile(textfilesDir, pres, page);
     } catch (InterruptedException e) {
-      log.warn("Interrupted Exception while generating thumbnails.");
+      log.error("Interrupted Exception while generating thumbnails {}", pres.getName(), e);
       success = false;
     }
 
@@ -60,15 +60,15 @@ public class TextFileCreatorImp implements TextFileCreator {
     return success;
   }
 
-  private boolean generateTextFiles(File textfilesDir,
-      UploadedPresentation pres) throws InterruptedException {
+  private boolean generateTextFile(File textfilesDir,
+      UploadedPresentation pres, int page) throws InterruptedException {
     boolean success = true;
     String source = pres.getUploadedFile().getAbsolutePath();
     String dest;
     String COMMAND = "";
 
     if (SupportedFileTypes.isImageFile(pres.getFileType())) {
-      dest = textfilesDir.getAbsolutePath() + File.separator + "slide-1.txt";
+      dest = textfilesDir.getAbsolutePath() + File.separatorChar + "slide-1.txt";
       String text = "No text could be retrieved for the slide";
 
       File file = new File(dest);
@@ -77,23 +77,26 @@ public class TextFileCreatorImp implements TextFileCreator {
         writer = new BufferedWriter(new FileWriter(file));
         writer.write(text);
       } catch (IOException e) {
-        log.error("Error: " + e.getMessage());
+        log.error("Error: ", e);
         success = false;
       } finally {
         try {
           writer.close();
         } catch (IOException e) {
-          log.error("Error: " + e.getMessage());
+          log.error("Error: ", e);
           success = false;
         }
       }
 
     } else {
-      dest = textfilesDir.getAbsolutePath() + File.separator + "slide-";
+      dest = textfilesDir.getAbsolutePath() + File.separatorChar + "slide-" + page + ".txt";
       // sudo apt-get install xpdf-utils
-      for (int i = 1; i <= pres.getNumberOfPages(); i++) {
-        COMMAND = "pdftotext -raw -nopgbrk -enc UTF-8 -f " + i + " -l " + i
-            + " " + source + " " + dest + i + ".txt";
+
+        COMMAND = "pdftotext -raw -nopgbrk -enc UTF-8 -f " + page + " -l " + page
+            + " " + source + " " + dest;
+
+        //System.out.println(COMMAND);
+
         boolean done = new ExternalProcessExecutor().exec(COMMAND, 60000);
         if (!done) {
           success = false;
@@ -102,16 +105,14 @@ public class TextFileCreatorImp implements TextFileCreator {
           logData.put("meetingId", pres.getMeetingId());
           logData.put("presId", pres.getId());
           logData.put("filename", pres.getName());
+          logData.put("logCode", "create_txt_files_failed");
           logData.put("message", "Failed to create text files.");
 
           Gson gson = new Gson();
           String logStr = gson.toJson(logData);
-          log.warn("-- analytics -- " + logStr);
+          log.warn(" --analytics-- data={}", logStr);
 
-          break;
         }
-      }
-
     }
 
     return success;
@@ -124,8 +125,8 @@ public class TextFileCreatorImp implements TextFileCreator {
 
   private void cleanDirectory(File directory) {
     File[] files = directory.listFiles();
-    for (int i = 0; i < files.length; i++) {
-      files[i].delete();
+    for (File file : files) {
+      file.delete();
     }
   }
 

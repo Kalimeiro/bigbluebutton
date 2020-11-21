@@ -1,30 +1,19 @@
 import RedisPubSub from '/imports/startup/server/redis';
 import { check } from 'meteor/check';
-import Presentations from '/imports/api/presentations';
+import { extractCredentials } from '/imports/api/common/server/helpers';
 
-export default function setPresentation(credentials, presentationId) {
-  const REDIS_CONFIG = Meteor.settings.redis;
+export default function setPresentation(presentationId, podId) {
+  const REDIS_CONFIG = Meteor.settings.private.redis;
   const CHANNEL = REDIS_CONFIG.channels.toAkkaApps;
   const EVENT_NAME = 'SetCurrentPresentationPubMsg';
+  const { meetingId, requesterUserId } = extractCredentials(this.userId);
 
-  const { meetingId, requesterUserId } = credentials;
-
-  check(meetingId, String);
-  check(requesterUserId, String);
   check(presentationId, String);
-
-  const currentPresentation = Presentations.findOne({
-    meetingId,
-    id: presentationId,
-    current: true,
-  });
-
-  if (currentPresentation && currentPresentation.id === presentationId) {
-    return Promise.resolve();
-  }
+  check(podId, String);
 
   const payload = {
     presentationId,
+    podId,
   };
 
   return RedisPubSub.publishUserMessage(CHANNEL, EVENT_NAME, meetingId, requesterUserId, payload);
